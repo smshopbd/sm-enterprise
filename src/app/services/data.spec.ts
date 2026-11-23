@@ -140,6 +140,39 @@ describe('DataService inventory and ledger lifecycles', () => {
     expect(data.products()[0].stock).toBe(0);
   });
 
+  it('sets the product cost to the rate a received purchase was bought at', () => {
+    const { data } = setup();
+    data.products.set([product({ purchasePrice: 80 })]);
+    purchase(data, {
+      items: [{ id: 1, productId: 10, productName: 'Battery', itemCode: 'B10', unit: 'pcs', quantity: 3, purchasePrice: 95.5, subtotal: 286.5 }]
+    });
+    expect(data.products()[0].purchasePrice).toBe(95.5);
+  });
+
+  it('leaves the product cost alone for a purchase that is not received', () => {
+    const { data } = setup();
+    data.products.set([product({ purchasePrice: 80 })]);
+    purchase(data, {
+      status: 'Pending',
+      items: [{ id: 1, productId: 10, productName: 'Battery', itemCode: 'B10', unit: 'pcs', quantity: 3, purchasePrice: 120, subtotal: 360 }]
+    });
+    expect(data.products()[0].purchasePrice).toBe(80);
+  });
+
+  it('updates variant cost from the bought variant and keeps the parent at the cheapest rate', () => {
+    const { data } = setup();
+    data.products.set([product({ type: 'variant', purchasePrice: 80, variants: [
+      { id: 1, variationId: 1, variationName: 'Size', variantValue: 'A', itemCode: 'A', purchasePrice: 80, wholesalePrice: 90, salesPrice: 100, openingStock: 2 },
+      { id: 2, variationId: 1, variationName: 'Size', variantValue: 'B', itemCode: 'B', purchasePrice: 90, wholesalePrice: 95, salesPrice: 105, openingStock: 2 }
+    ] })]);
+    purchase(data, {
+      items: [{ id: 1, productId: 10, variantId: 1, variantValue: 'A', productName: 'Battery', itemCode: 'A', unit: 'pcs', quantity: 2, purchasePrice: 70, subtotal: 140 }]
+    });
+    expect(data.products()[0].variants![0].purchasePrice).toBe(70);
+    expect(data.products()[0].variants![1].purchasePrice).toBe(90);
+    expect(data.products()[0].purchasePrice).toBe(70);
+  });
+
   it('keeps credit-note settlement in invoice and party due after a note-only sale edit', () => {
     const { data } = setup();
     data.products.set([product({ stock: 10 })]);

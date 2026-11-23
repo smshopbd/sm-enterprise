@@ -2290,6 +2290,7 @@ export class DataService {
     this.purchases.update(list => [record, ...list]);
     this.savePurchases();
     this.postPurchaseStock(record, 1);
+    this.syncPurchaseCost(record);
     this.postPurchaseParty(record, 1);
     return record;
   }
@@ -2304,6 +2305,7 @@ export class DataService {
     this.savePurchases();
     if (previous) this.postPurchaseStock(previous, -1);
     this.postPurchaseStock(record, 1);
+    this.syncPurchaseCost(record);
     if (previous) this.postPurchaseParty(previous, -1);
     this.postPurchaseParty(record, 1);
   }
@@ -2322,6 +2324,37 @@ export class DataService {
   /** Only received purchases hold stock; reversing an edit or delete puts the quantity back. */
   private postPurchaseStock(purchase: Purchase, direction: 1 | -1) {
     this.postInventory(['purchase', purchase, direction]);
+  }
+
+  /**
+   * A received purchase makes the bought rate the product's cost, so margins,
+   * stock valuation and the products list follow the latest buying price.
+   */
+  private syncPurchaseCost(purchase: Purchase) {
+    if (purchase.status !== 'Received') return;
+    const lines = (purchase.items ?? []).filter(line => line.purchasePrice > 0);
+    if (!lines.length) return;
+    this.products.update(list => list.map(product => {
+      const hits = lines.filter(line => line.productId != null
+        ? line.productId === product.id
+        : line.productName === product.name);
+      if (!hits.length) return product;
+      if (product.type === 'variant') {
+        let changed = false;
+        const variants = product.variants?.map(variant => {
+          const line = hits.find(hit => hit.variantId === variant.id);
+          if (!line || line.purchasePrice === variant.purchasePrice) return variant;
+          changed = true;
+          return { ...variant, purchasePrice: line.purchasePrice };
+        });
+        if (!changed) return product;
+        const quoted = (variants ?? []).map(variant => variant.purchasePrice).filter(price => price > 0);
+        return { ...product, variants, purchasePrice: quoted.length ? Math.min(...quoted) : product.purchasePrice };
+      }
+      const line = hits.find(hit => hit.variantId == null) ?? hits[0];
+      if (line.purchasePrice === product.purchasePrice) return product;
+      return { ...product, purchasePrice: line.purchasePrice };
+    }));
   }
 
   /**
