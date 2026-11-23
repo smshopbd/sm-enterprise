@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "smshop-1226e"
+  },
+  "targets": {
+    "smshop-1226e": {
+      "hosting": {
+        "sm": [
+          "smshopbd"
+        ]
+      }
+    }
+  }
+}

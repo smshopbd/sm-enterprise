@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="bn">
+  <head>
+    <meta charset="utf-8" />
+    <title>SM ENTERPRISE - Inventory, Sales & POS System</title>
+    <base href="/" />
+    <script>
+      // Applied before first paint so a stored dark theme never flashes white and the
+      // document language matches the stored preference from the very first frame.
+      (function () {
+        try {
+          var d = document.documentElement;
+          var mode = localStorage.getItem('sm_theme');
+          var dark = mode === 'dark' ||
+            (mode === 'system' && !!window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          d.classList.toggle('dark', dark);
+          d.style.colorScheme = dark ? 'dark' : 'light';
+          d.lang = localStorage.getItem('sm_lang') === 'en' ? 'en' : 'bn';
+        } catch (e) {}
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
+    <meta name="description" content="Complete business management application with inventory, sales, purchases, POS system, party management, warranties, and Excel import/export." />
+    <meta property="og:title" content="SM ENTERPRISE - Inventory, Sales & POS System" />
+    <meta property="og:description" content="Complete business management application with inventory, sales, purchases, POS system, party management, warranties, and Excel import/export." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0f766e" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#020617" media="(prefers-color-scheme: dark)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SM Enterprise" />
+  </head>
+  <body>
+    <app-root></app-root>
+  </body>
+</html>

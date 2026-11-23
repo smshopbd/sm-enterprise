@@ -1,0 +1,764 @@
+@import "tailwindcss";
+
+/* Bundled locally so a shop with a weak/blocked connection still gets icons
+   and Bengali text instead of raw ligature words and a fallback font. */
+@font-face {
+  font-family: 'Material Icons';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/assets/fonts/material-icons.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Kalpurush';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/assets/fonts/kalpurush.woff2') format('woff2');
+}
+
+/* MatIcon adds this class by default; the rule used to come from Google's CSS. */
+.material-icons {
+  font-family: 'Material Icons';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* App typography: English/digits render in Calibri, Bengali falls through to
+   Kalpurush because Calibri has no Bengali glyphs. Overrides the font-sans and
+   font-mono utilities (used for invoice numbers and amounts) app-wide. */
+@theme {
+  --font-sans: Calibri, 'Kalpurush', sans-serif;
+  --font-mono: Calibri, 'Kalpurush', sans-serif;
+}
+
+@layer base {
+  /* Fluid root size: all rem-based text/spacing scales smoothly with the viewport */
+  html {
+    font-size: clamp(15px, 0.28vw + 13.9px, 16px);
+  }
+
+  body {
+    font-family: Calibri, 'Kalpurush', sans-serif;
+    background-color: #f8fafc;
+    color: #1e293b;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Professional table row light shading */
+  table tbody tr {
+    background-color: #ffffff;
+    transition: background-color 0.15s ease;
+  }
+  table tbody tr:nth-child(even) {
+    background-color: #f1f5f9;
+  }
+  table tbody tr:hover {
+    background-color: #e2e8f0;
+  }
+}
+
+/* POS is a fixed-height workspace: its product and cart panes scroll on their
+   own. Without a definite height the panes grow with the content and the phone
+   layout loses its inner scrolling — the cart bar and filters drift off-screen. */
+.page-shell:has(> app-pos) {
+  height: 100%;
+}
+
+app-pos {
+  display: block;
+  height: 100%;
+}
+
+/* Icons keep their shape in tight flex rows instead of getting squashed.
+   Kept unlayered so these sizes override Angular Material's .mat-icon rules.
+   Rem-based sizes follow the fluid root font size. */
+mat-icon.mat-icon {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 1.5rem;
+  line-height: 1.5rem;
+}
+mat-icon.mat-icon.text-xs { width: 1rem; height: 1rem; font-size: 1rem; line-height: 1rem; }
+mat-icon.mat-icon.text-sm { width: 1.15rem; height: 1.15rem; font-size: 1.15rem; line-height: 1.15rem; }
+mat-icon.mat-icon.text-base { width: 1.3rem; height: 1.3rem; font-size: 1.3rem; line-height: 1.3rem; }
+mat-icon.mat-icon.text-lg { width: 1.5rem; height: 1.5rem; font-size: 1.5rem; line-height: 1.5rem; }
+mat-icon.mat-icon.text-xl { width: 1.75rem; height: 1.75rem; font-size: 1.75rem; line-height: 1.75rem; }
+mat-icon.mat-icon.text-2xl { width: 2.1rem; height: 2.1rem; font-size: 2.1rem; line-height: 2.1rem; }
+mat-icon.mat-icon.text-3xl { width: 2.5rem; height: 2.5rem; font-size: 2.5rem; line-height: 2.5rem; }
+mat-icon.mat-icon.text-4xl { width: 3rem; height: 3rem; font-size: 3rem; line-height: 3rem; }
+
+/* Phones / small tablets: tighten default icon box a little */
+@media (max-width: 767px) {
+  mat-icon.mat-icon:not(.text-xs):not(.text-sm):not(.text-base):not(.text-lg):not(.text-xl):not(.text-2xl):not(.text-3xl):not(.text-4xl) {
+    width: 1.35rem;
+    height: 1.35rem;
+    font-size: 1.35rem;
+    line-height: 1.35rem;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+.dark ::-webkit-scrollbar-track {
+  background: #0b1220;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* ---------------------------------------------------------------
+   Brand surfaces. PreferencesService rewrites these from the chosen
+   accent (teal by default), so table bands, selected rows and the
+   grid cards follow the theme instead of a fixed teal.
+   --------------------------------------------------------------- */
+:root {
+  --sm-brand: #0d9488;
+  --sm-brand-strong: #0f766e;
+  --sm-row-picked: #d4f6f1;
+  --sm-row-picked-hover: #c6f1ea;
+  --sm-row-picked-dark: #10444d;
+  --sm-row-picked-dark-hover: #14565f;
+}
+
+/* ---------------------------------------------------------------
+   Data-table header band: solid accent colour with white column titles.
+   Unlayered so it wins over the per-template bg-slate-* / text-slate-*
+   header utilities, and it is mode-independent — the header looks the
+   same in light and dark mode, so no template needs editing. A4/thermal
+   print areas keep their own paper styling.
+   --------------------------------------------------------------- */
+table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) thead,
+table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) thead tr {
+  background-color: var(--sm-brand);
+}
+table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) thead th {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+/* ---------------------------------------------------------------
+   Dark mode fallback for Tailwind utility classes that have no
+   dark: variant. Kept unlayered so it beats @layer utilities and
+   does not require touching every template.
+   --------------------------------------------------------------- */
+.dark body {
+  background-color: #020617;
+  color: #cbd5e1;
+}
+.dark table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody tr { background-color: #0f172a; }
+.dark table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody tr:nth-child(even) { background-color: #111c31; }
+.dark table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody tr:hover { background-color: #1e293b; }
+
+/* Checkbox-selected rows (placed after the row/hover rules so the pick wins) */
+table tbody tr.row-picked { background-color: var(--sm-row-picked); }
+.dark table tbody tr.row-picked { background-color: var(--sm-row-picked-dark); }
+
+/* Sales list column-engine grid: cells are opaque so the sticky header band and the
+   pinned left rail can cover the rows scrolling underneath them. The header keeps the
+   accent band (styles.css above), so it follows the chosen theme in both colour modes. */
+.sl-table > thead > tr > th { background-color: var(--sm-brand); border-bottom: 1px solid rgba(255, 255, 255, 0.28); }
+.sl-table > tbody > tr > td { background-color: #ffffff; border-bottom: 1px solid #eef2f7; }
+.sl-table > tbody > tr.alt > td { background-color: #f8fafc; }
+.sl-table > tbody > tr.rowline:hover > td { background-color: var(--sm-table-hover); }
+.sl-table > tbody > tr.picked > td { background-color: var(--sm-row-picked); }
+.sl-table .pin-edge { border-right: 1px solid rgba(255, 255, 255, 0.28); }
+.mcard { background-color: #ffffff; transition: background-color 120ms ease; }
+.mcard:hover { background-color: var(--sm-table-hover); }
+.mcard.picked { background-color: var(--sm-row-picked); }
+.mcard.picked:hover { background-color: var(--sm-row-picked-hover); }
+
+.dark .sl-table > tbody > tr > td { background-color: #0f172a; border-bottom-color: #1b2843; }
+.dark .sl-table > tbody > tr.alt > td { background-color: #111c31; }
+.dark .sl-table > tbody > tr.rowline:hover > td { background-color: var(--sm-table-hover-dark); }
+.dark .sl-table > tbody > tr.picked > td { background-color: var(--sm-row-picked-dark); }
+.dark .mcard { background-color: #0f172a; }
+.dark .mcard:hover { background-color: var(--sm-table-hover-dark); }
+.dark .mcard.picked { background-color: var(--sm-row-picked-dark); }
+.dark .mcard.picked:hover { background-color: var(--sm-row-picked-dark-hover); }
+
+/* App name lockup in the header; follows the accent like the rest of the UI. */
+.brand-text {
+  background-image: linear-gradient(90deg, var(--sm-brand-strong), var(--sm-brand), var(--color-teal-400, #2dd4bf));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.dark .brand-text {
+  background-image: linear-gradient(90deg, var(--color-teal-300, #5eead4), var(--color-teal-400, #2dd4bf));
+}
+
+/* ---------------------------------------------------------------
+   Data-table skin. Settings → রঙ ও থিম writes:
+     --sm-table-hover / --sm-table-hover-dark  (accent-derived tint)
+     data-sm-border="soft|grid|bold|none"      (border system)
+   Unlayered so it outranks per-template hover:bg-* and border
+   utilities; print areas keep their own paper styling.
+   --------------------------------------------------------------- */
+:root {
+  --sm-table-hover: #e2e8f0;
+  --sm-table-hover-dark: #1e293b;
+  --sm-table-border: #e6edf5;
+  --sm-table-border-strong: #cbd5e1;
+}
+.dark {
+  --sm-table-border: #1e293b;
+  --sm-table-border-strong: #334155;
+}
+
+table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody tr:hover {
+  background-color: var(--sm-table-hover);
+}
+.dark table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody tr:hover {
+  background-color: var(--sm-table-hover-dark);
+}
+
+/* The sales grid paints opaque cells, so its hover has to hit the cells. */
+.sl-table > tbody > tr.rowline:hover > td { background-color: var(--sm-table-hover); }
+.dark .sl-table > tbody > tr.rowline:hover > td { background-color: var(--sm-table-hover-dark); }
+
+/* Selection stays visible while hovered. */
+table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody tr.row-picked,
+table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody tr.row-picked:hover {
+  background-color: #ccfbf1;
+}
+.dark table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody tr.row-picked,
+.dark table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody tr.row-picked:hover {
+  background-color: #12433d;
+}
+.sl-table > tbody > tr.picked > td,
+.sl-table > tbody > tr.picked:hover > td { background-color: #d5f4ee; }
+.dark .sl-table > tbody > tr.picked > td,
+.dark .sl-table > tbody > tr.picked:hover > td { background-color: #12433d; }
+
+/* Border system: template row/divide utilities step aside, cells draw the lines. */
+html[data-sm-border] table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody tr {
+  border-width: 0;
+}
+html[data-sm-border="soft"] table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody td,
+html[data-sm-border="soft"] table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tfoot td {
+  border-bottom: 1px solid var(--sm-table-border);
+}
+html[data-sm-border="grid"] table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody td,
+html[data-sm-border="grid"] table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tfoot td {
+  border-bottom: 1px solid var(--sm-table-border);
+  border-right: 1px solid var(--sm-table-border);
+}
+html[data-sm-border="bold"] table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody td,
+html[data-sm-border="bold"] table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tfoot td {
+  border-bottom: 2px solid var(--sm-table-border-strong);
+  border-right: 1px solid var(--sm-table-border-strong);
+}
+html[data-sm-border="none"] table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tbody td,
+html[data-sm-border="none"] table:not(#printable-area table):not(.printable-area table):not(#receipt-print-area table) tfoot td {
+  border-bottom-width: 0;
+  border-right-width: 0;
+}
+
+.dark .bg-white { background-color: #0f172a; }
+.dark .bg-slate-50 { background-color: #0b1220; }
+.dark .bg-slate-100 { background-color: #111c31; }
+.dark .bg-slate-200 { background-color: #1e293b; }
+
+.dark .text-slate-900,
+.dark .text-slate-800 { color: #e2e8f0; }
+.dark .text-slate-700 { color: #cbd5e1; }
+.dark .text-slate-600,
+.dark .text-slate-500 { color: #94a3b8; }
+
+.dark .border-slate-100,
+.dark .border-slate-200 { border-color: #1e293b; }
+.dark .border-slate-300 { border-color: #334155; }
+
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-slate-50 > :not([hidden]) ~ :not([hidden]) { border-color: #1e293b; }
+
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: #0b1220;
+  color: #e2e8f0;
+  border-color: #334155;
+}
+.dark input::placeholder { color: #64748b; }
+
+/* The POS cash receipt is paper white in both modes, like the printed slip */
+.dark .receipt-paper,
+.dark .receipt-paper .bg-white { background-color: #ffffff !important; }
+.dark .receipt-paper,
+.dark .receipt-paper .text-slate-900,
+.dark .receipt-paper .text-slate-800,
+.dark .receipt-paper .text-slate-700,
+.dark .receipt-paper .text-slate-600,
+.dark .receipt-paper .text-slate-500 { color: #0f172a !important; }
+.dark .receipt-paper .border-slate-400 { border-color: #94a3b8 !important; }
+.dark .receipt-paper .border-slate-200 { border-color: #cbd5e1 !important; }
+.dark .receipt-paper input,
+.dark .receipt-paper select,
+.dark .receipt-paper textarea { background-color: #ffffff; color: #0f172a; border-color: #cbd5e1; }
+
+/* Top-anchored POS receipt.
+   The Print button clones the slip into #pos-print-root, which stays off-canvas
+   on screen and becomes a horizontally centred slip at the top of the sheet on
+   paper — the 80mm width is kept. A shop that feeds only a third of an A4 gets
+   the slip in that top third instead of a blank half-page above it. */
+#pos-print-root {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+#pos-print-root .pos-print-sheet {
+  width: 210mm;
+}
+#pos-print-root .pos-print-paper {
+  width: 80mm;
+  max-width: 80mm;
+  padding: 4mm;
+  box-sizing: border-box;
+  background: #fff;
+  color: #0f172a;
+  overflow: hidden;
+}
+
+/* The A4 invoice/voucher must stay paper-white in dark mode */
+.dark #printable-area.sp-invoice,
+.dark .printable-area.sp-invoice,
+.dark #printable-area.sp-invoice .bg-white,
+.dark .printable-area.sp-invoice .bg-white {
+  background-color: #ffffff !important;
+}
+.dark #printable-area.sp-invoice .text-slate-900,
+.dark #printable-area.sp-invoice .text-slate-800,
+.dark #printable-area.sp-invoice .text-slate-700,
+.dark #printable-area.sp-invoice .text-slate-600,
+.dark #printable-area.sp-invoice .text-slate-500,
+.dark .printable-area.sp-invoice .text-slate-900,
+.dark .printable-area.sp-invoice .text-slate-800,
+.dark .printable-area.sp-invoice .text-slate-700,
+.dark .printable-area.sp-invoice .text-slate-600,
+.dark .printable-area.sp-invoice .text-slate-500 {
+  color: #1e293b !important;
+}
+.dark #printable-area.sp-invoice input,
+.dark #printable-area.sp-invoice select,
+.dark #printable-area.sp-invoice textarea,
+.dark .printable-area.sp-invoice input,
+.dark .printable-area.sp-invoice select,
+.dark .printable-area.sp-invoice textarea {
+  background-color: #ffffff;
+  color: #1e293b;
+  border-color: #cbd5e1;
+}
+
+/* Print styling */
+@page {
+  size: A4;
+  margin: 9mm 12mm;
+}
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-area, #printable-area * {
+    visibility: visible;
+  }
+  #printable-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Vouchers using the multi-copy paper engine (1/2/4 per sheet).
+     Position/size comes from the stylesheet injected by the Print button. */
+  .printable-area, .printable-area * {
+    visibility: visible;
+  }
+  .printable-area {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* List pages (e.g. Sales list) when no voucher is open for print */
+  body.print-list .list-print-shell {
+    display: block !important;
+  }
+  body.print-list #list-printable-area,
+  body.print-list #list-printable-area * {
+    visibility: visible;
+  }
+  body.print-list #list-printable-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  body.print-list #list-printable-area table {
+    min-width: 0 !important;
+  }
+  /* The parties table carries user-chosen pixel widths on screen; paper fits the page. */
+  body.print-list #list-printable-area table.pt-table {
+    width: 100% !important;
+    table-layout: auto !important;
+  }
+  body.print-list #list-printable-area table.pt-table col {
+    width: auto !important;
+  }
+  body.print-list .pt-table .pt-col-head mat-icon {
+    display: none !important;
+  }
+  body.print-list .sl-sticky {
+    position: static !important;
+  }
+
+  /* Column-engine grids (All Products, Sales list) keep their own sticky header,
+     pinned rail, fixed widths and resize handles — none of that belongs on paper. */
+  body.print-list .sl-table {
+    table-layout: auto !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  body.print-list .sl-table col {
+    width: auto !important;
+  }
+  body.print-list .sl-table > thead > tr > th,
+  body.print-list .sl-table .pin {
+    position: static !important;
+  }
+  body.print-list .sl-table > tbody > tr > td,
+  body.print-list .sl-table > tbody > tr.alt > td,
+  body.print-list .sl-table > tbody > tr.picked > td {
+    background-color: transparent !important;
+  }
+  body.print-list .col-resizer,
+  body.print-list .col-grip {
+    display: none !important;
+  }
+
+  /* Due collection receipt (80mm thermal) */
+  #receipt-print-area, #receipt-print-area * {
+    visibility: visible;
+  }
+  #receipt-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* A4 POS slip: only the cloned slip is in the page, pinned to the top edge. */
+  body.printing-pos-receipt > *:not(#pos-print-root) {
+    display: none !important;
+  }
+  body.printing-pos-receipt,
+  body.printing-pos-receipt #pos-print-root,
+  body.printing-pos-receipt #pos-print-root * {
+    visibility: visible !important;
+  }
+  body.printing-pos-receipt {
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  body.printing-pos-receipt #pos-print-root {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    display: block !important;
+  }
+  body.printing-pos-receipt #pos-print-root .pos-print-sheet {
+    /* 296mm instead of 297mm: rounding on some drivers otherwise adds a blank page. */
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    width: 210mm;
+    height: 296mm;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  /* A long bill becomes several sheets, one printed page each. */
+  body.printing-pos-receipt #pos-print-root .pos-print-sheet + .pos-print-sheet {
+    break-before: page;
+    page-break-before: always;
+  }
+  body.printing-pos-receipt #pos-print-root .pos-print-paper {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    color: #000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  body.printing-pos-receipt #pos-print-root .pos-print-paper * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  body.printing-pos-receipt #pos-print-root .pos-print-paper tr {
+    break-inside: avoid;
+  }
+  /* The slip has its own paper table design: no app header band, no grid
+     borders from the table-border setting and no dark-mode row fills. */
+  body.printing-pos-receipt #pos-print-root table,
+  body.printing-pos-receipt #pos-print-root thead,
+  body.printing-pos-receipt #pos-print-root thead tr,
+  body.printing-pos-receipt #pos-print-root tbody tr {
+    background-color: transparent !important;
+  }
+  body.printing-pos-receipt #pos-print-root thead th {
+    color: #000 !important;
+    border-color: #94a3b8 !important;
+  }
+  body.printing-pos-receipt #pos-print-root tbody td,
+  body.printing-pos-receipt #pos-print-root tfoot td {
+    border-width: 0 !important;
+  }
+
+  /* Mono laser printers (Canon LBP 6030 and friends) turn pale greys into a
+     washed-out haze: every printed glyph is forced to pure black, light fills
+     are dropped so white labels never sit on a faint tint, and every rule
+     prints as a black line. */
+  #printable-area,
+  .printable-area,
+  #list-printable-area,
+  #receipt-print-area {
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #printable-area *,
+  .printable-area *,
+  #list-printable-area *,
+  #receipt-print-area *,
+  body.printing-pos-receipt #pos-print-root,
+  body.printing-pos-receipt #pos-print-root * {
+    color: #000 !important;
+    text-shadow: none !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #printable-area *,
+  .printable-area *,
+  #list-printable-area *,
+  #receipt-print-area *,
+  body.printing-pos-receipt #pos-print-root * {
+    background-color: transparent !important;
+    background-image: none !important;
+    border-color: #000 !important;
+  }
+  /* Boxed sections keep a heavier stroke so the edges stay solid. */
+  .sp-customer,
+  .sp-items,
+  .sp-account,
+  .sp-block,
+  .bv-meta,
+  .bv-account,
+  .bv-notes,
+  .wc-qr,
+  .wc-block,
+  .pst-profile,
+  .pst-sum {
+    border-width: 2px !important;
+  }
+  .sp-final td,
+  .bv-final td {
+    border-top: 2px solid #000 !important;
+    border-bottom: 2px solid #000 !important;
+    font-weight: 900 !important;
+  }
+  .voucher-print-paper.sheet-multi .voucher-cell {
+    outline-color: #000 !important;
+  }
+  body.printing-pos-receipt #pos-print-root thead th {
+    border-color: #000 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* Drag-to-reorder (CDK) */
+.cdk-drag {
+  cursor: default;
+}
+.cdk-drag-preview {
+  box-sizing: border-box;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.35), 0 8px 10px -6px rgba(15, 23, 42, 0.2);
+  background-color: #fff;
+  border: 1px solid #99f6e4;
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+}
+.cdk-drag-preview td,
+.cdk-drag-preview th {
+  padding: 10px 16px;
+}
+.cdk-drag-placeholder {
+  opacity: 0.35;
+  outline: 2px dashed #14b8a6;
+  outline-offset: -2px;
+  border-radius: 12px;
+}
+.cdk-drag-animating {
+  transition: transform 220ms cubic-bezier(0, 0, 0.2, 1);
+}
+.cdk-drop-list-dragging .cdk-drag:not(.cdk-drag-placeholder) {
+  transition: transform 220ms cubic-bezier(0, 0, 0.2, 1);
+}
+.dark .cdk-drag-preview {
+  background-color: #0f172a;
+  border-color: #134e4a;
+  color: #e2e8f0;
+}
+
+/* Resizable + movable data table columns (All Products) */
+.products-table {
+  table-layout: fixed;
+}
+.products-table th.col-head-cell {
+  position: relative;
+  overflow: hidden;
+}
+.products-table td {
+  overflow: hidden;
+}
+.products-table .col-head-inner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  cursor: grab;
+}
+.products-table th.text-right .col-head-inner {
+  justify-content: flex-end;
+}
+.products-table th.text-center .col-head-inner {
+  justify-content: center;
+}
+.products-table .col-grip {
+  line-height: 1;
+  color: #cbd5e1;
+  transition: color 120ms ease;
+}
+.products-table th.col-head-cell:hover .col-grip {
+  color: #14b8a6;
+}
+.products-table .col-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+.col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 20%;
+  right: 3px;
+  width: 2px;
+  height: 60%;
+  border-radius: 2px;
+  background: #cbd5e1;
+  transition: background 120ms ease;
+}
+.col-resizer:hover::after,
+.col-resizer:active::after {
+  background: var(--sm-brand);
+}
+th.cdk-drag-preview {
+  display: block;
+  box-sizing: border-box;
+  background-color: #fff;
+  border: 1px solid #14b8a6;
+  border-radius: 8px;
+  box-shadow: 0 8px 18px -6px rgba(15, 23, 42, 0.35);
+  padding: 6px 10px;
+  width: auto;
+}
+.dark .products-table .col-grip {
+  color: #475569;
+}
+.dark .col-resizer::after {
+  background: #334155;
+}
+/* Sales list header keeps the teal band, so its handle stays white instead of
+   turning teal-on-teal in the shared hover state. */
+.sl-table .col-resizer::after { background: rgba(255, 255, 255, 0.45); }
+.sl-table .col-resizer:hover::after,
+.sl-table .col-resizer:active::after { background: #ffffff; }
+.dark .sl-table .col-resizer::after { background: rgba(255, 255, 255, 0.45); }
+.dark th.cdk-drag-preview {
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
+
+/* ============================================================
+   Lazy image placeholders
+   ============================================================ */
+
+/* Remote photos paint a soft placeholder while the file travels, so grids and
+   tables don't jump as images pop in. Local logos/data URIs are left alone. */
+img[loading="lazy"]:not([src*="/assets/"]):not([src^="data:"]) {
+  background-color: #eef2f7;
+  background-image: linear-gradient(135deg, #eef2f7 0%, #f8fafc 50%, #e6ebf2 100%);
+}
+.dark img[loading="lazy"]:not([src*="/assets/"]):not([src^="data:"]) {
+  background-color: #0b1220;
+  background-image: linear-gradient(135deg, #0b1220 0%, #16233a 50%, #0b1220 100%);
+}

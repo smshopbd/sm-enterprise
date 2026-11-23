@@ -1,0 +1,14 @@
+.env.local
+.env
+.env.*
+!.env.example
+public/assets/cloud-config.json
+cloud-config.live-backup.json
+node_modules/
+dist/
+.angular/
+*.log
+*.zip
+.DS_Store
+Thumbs.db
+.firebase/

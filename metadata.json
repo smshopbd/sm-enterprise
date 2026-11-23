@@ -1,0 +1,6 @@
+{
+  "name": "SM ENTERPRISE - Inventory, Sales & POS System",
+  "description": "Complete business management application with inventory, sales, purchases, POS system, party management, warranties, and Excel import/export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
