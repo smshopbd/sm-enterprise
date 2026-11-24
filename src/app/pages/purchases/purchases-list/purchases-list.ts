@@ -470,6 +470,7 @@ export class PurchasesList {
     );
     if (!confirmed) return;
     this.dataService.deletePurchase(purchase.id);
+    this.session.log('Purchase Deleted', `${purchase.invoice} — ${purchase.supplierName} — ${(purchase.total || 0).toFixed(2)} TK`);
     this.notify.success(
       this.prefs.txt(`ক্রয় #${purchase.invoice} মুছে ফেলা হয়েছে এবং স্টক ফিরিয়ে দেওয়া হয়েছে।`, `Purchase #${purchase.invoice} deleted and stock restored.`)
     );

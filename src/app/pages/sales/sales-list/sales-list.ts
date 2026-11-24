@@ -8,6 +8,7 @@ import { BatteryAdjustmentItem, DataService, Party, Sale, SaleItem, SalesReturnI
 import { NotificationService } from '../../../services/notification';
 import { OrderLockService } from '../../../services/order-lock';
 import { PreferencesService } from '../../../services/preferences';
+import { SessionService } from '../../../services/session';
 import { InvoiceModal } from '../../../components/invoice-modal/invoice-modal';
 import { ShareInvoiceComponent } from '../../../components/share-invoice/share-invoice';
 import { PartyLedger } from '../../../components/party-ledger/party-ledger';
@@ -1473,6 +1474,7 @@ function persistSavedView(view: SavedView): void {
 })
 export class SalesList {
   dataService = inject(DataService);
+  private session = inject(SessionService);
   private notify = inject(NotificationService);
   private readonly router = inject(Router);
   readonly orderLock = inject(OrderLockService);
@@ -1788,6 +1790,7 @@ export class SalesList {
     });
     if (confirmed) {
       this.dataService.deleteSale(sale.id);
+      this.session.log('Sale Deleted', `${sale.invoice} — ${sale.customerName || '—'} — ${(sale.total || 0).toFixed(2)} TK`);
       this.orderLock.lock(sale.id);
       this.notify.success(this.prefs.txt(`ইনভয়েস #${sale.invoice} মুছে ফেলা হয়েছে।`, `Invoice #${sale.invoice} deleted.`));
     }

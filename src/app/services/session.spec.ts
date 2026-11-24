@@ -3,7 +3,10 @@ import { getTestBed, TestBed } from '@angular/core/testing';
 import { BrowserTestingModule, platformBrowserTesting } from '@angular/platform-browser/testing';
 import { hashSecret, sha256Hex, verifySecret } from '../utils/secret';
 import { OrderLockService } from './order-lock';
-import { AUDIT_KEY, MAIN_ADMIN, SESSION_KEY, SessionService, USERS_KEY, type UserAccount, type UserRole } from './session';
+import {
+  AUDIT_KEY, LEGACY_AUDIT_KEY, MAIN_ADMIN, SESSION_KEY, SessionService, USERS_KEY, auditCategoryOf,
+  type UserAccount, type UserRole
+} from './session';
 import { StorageService } from './storage';
 
 /** Isolated synchronous mirror; no IndexedDB, browser credentials or cloud. */
@@ -14,6 +17,7 @@ class MemoryStorage {
   readonly remoteListeners = new Set<() => void>();
 
   read<T>(key: string): T | null { return (this.values.get(key) ?? null) as T | null; }
+  remove(key: string): void { this.values.delete(key); }
   isWriter(): boolean { return true; }
   write(key: string, value: unknown): void {
     this.values.set(key, value);
@@ -373,5 +377,33 @@ describe('local supervisor override lifetime', () => {
     storage.remote('sm_products_v2', []);
     expect(locks.isUnlocked(10)).toBe(true);
     expect(storage.writes.length).toBe(before);
+  });
+});
+
+describe('category audit trail', () => {
+  it('maps every action family to its own category', () => {
+    expect(auditCategoryOf('POS Sale')).toBe('sales');
+    expect(auditCategoryOf('Purchase Created')).toBe('purchases');
+    expect(auditCategoryOf('Battery Voucher')).toBe('battery');
+    expect(auditCategoryOf('Payment Received')).toBe('parties');
+    expect(auditCategoryOf('Product Created')).toBe('products');
+    expect(auditCategoryOf('Stock Reconciled')).toBe('stock');
+    expect(auditCategoryOf('Cash Closing')).toBe('accounts');
+    expect(auditCategoryOf('Warranty Stock Adjustment')).toBe('warranty');
+    expect(auditCategoryOf('Unit Added')).toBe('settings');
+    expect(auditCategoryOf('Login')).toBe('security');
+    expect(auditCategoryOf('Backup Imported')).toBe('data');
+    expect(auditCategoryOf('Something New')).toBe('other');
+  });
+
+  it('stamps the category, drops the legacy trail and can be cleared', async () => {
+    storage.values.set(LEGACY_AUDIT_KEY, [{ id: 1, at: new Date().toISOString(), user: 'Old', role: 'Admin', action: 'Login', detail: '' }]);
+    load();await login();
+    expect(storage.values.has(LEGACY_AUDIT_KEY)).toBe(false);
+    session.log('POS Sale', 'INV-1 — 100 TK');
+    expect(session.auditLogs()[0]).toMatchObject({ category: 'sales', action: 'POS Sale' });
+    session.clearAudit();
+    expect(session.auditLogs()).toEqual([]);
+    expect(storage.values.get(AUDIT_KEY)).toEqual([]);
   });
 });

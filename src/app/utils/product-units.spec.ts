@@ -58,4 +58,22 @@ describe('product unit helpers', () => {
     expect(saleLineBaseQty({ quantity: 3 })).toBe(3);
     expect(saleLineBaseQty(null)).toBe(0);
   });
+
+  it('shares one stock across factor-1 units, each with its own price', () => {
+    const rope = {
+      unit: 'গজ',
+      salesPrice: 150,
+      wholesalePrice: 140,
+      units: [
+        { name: 'কেজি', factor: 1, price: 800 },
+        { name: 'পিস', factor: 1, price: 200 }
+      ]
+    };
+    const choices = productUnitChoices(rope);
+    expect(choices.map(c => c.name)).toEqual(['গজ', 'কেজি', 'পিস']);
+    expect(choices[1]).toMatchObject({ factor: 1, price: 800, isBase: false });
+    expect(unitPriceOf(rope, 'পিস')).toBe(200);
+    // A shared unit moves the same stock count it sells (no conversion).
+    expect(saleLineBaseQty({ quantity: 4, unitFactor: unitFactorOf(rope, 'কেজি') })).toBe(4);
+  });
 });

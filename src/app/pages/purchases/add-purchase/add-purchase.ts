@@ -14,6 +14,7 @@ import {
 } from '../../../services/data';
 import { NotificationService } from '../../../services/notification';
 import { PreferencesService } from '../../../services/preferences';
+import { SessionService } from '../../../services/session';
 import { productSearchScore, variantLabel } from '../../../utils/product-search';
 import { PurchaseVoucher } from '../../../components/purchase-voucher/purchase-voucher';
 import { DmyDateDirective } from '../../../directives/dmy-date.directive';
@@ -75,6 +76,31 @@ interface ProductOption {
 
         <!-- Main entry column -->
         <div class="space-y-4 min-w-0">
+
+          <!-- Voucher number card -->
+          <div class="rounded-xl border border-teal-200 bg-gradient-to-r from-teal-50 via-white to-white p-4 shadow-xs dark:border-teal-900/60 dark:from-slate-900 dark:via-slate-900 dark:to-slate-950">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <label for="purchase-invoice" class="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-200">
+                  <mat-icon class="text-base text-teal-600">receipt_long</mat-icon>
+                  {{ prefs.txt('ভাউচার নম্বর', 'Voucher No.') }}
+                </label>
+                <p class="mt-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                  {{ prefs.txt('নিজের মতো নম্বর লিখুন — নতুন সিরিয়াল PUR-3001 থেকে শুরু', 'Type your own number — the series starts at PUR-3001') }}
+                </p>
+              </div>
+              <input
+                id="purchase-invoice"
+                type="text"
+                [ngModel]="invoiceNo()"
+                (ngModelChange)="invoiceNo.set($event)"
+                maxlength="24"
+                spellcheck="false"
+                [placeholder]="prefs.txt('যেমন PUR-3001', 'e.g. PUR-3001')"
+                class="w-full rounded-lg border border-teal-300 bg-white px-3 py-2 font-mono text-sm font-black text-teal-800 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-200 sm:w-60 dark:border-teal-800 dark:bg-slate-950 dark:text-teal-300"
+              >
+            </div>
+          </div>
 
           <!-- Supplier / warehouse card -->
           <div class="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-3">
@@ -523,6 +549,7 @@ export class AddPurchase implements OnInit {
   dataService = inject(DataService);
   private notify = inject(NotificationService);
   readonly prefs = inject(PreferencesService);
+  private session = inject(SessionService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
 
@@ -852,6 +879,29 @@ export class AddPurchase implements OnInit {
       return;
     }
 
+    const invoice = this.invoiceNo().trim();
+    if (!invoice) {
+      this.notify.error(
+        this.prefs.txt('ভাউচার নম্বর লিখুন।', 'Enter a voucher number.'),
+        this.prefs.txt('ভাউচার নম্বর নেই', 'Missing voucher number')
+      );
+      return;
+    }
+    const editingId = this.editPurchaseId();
+    const clash = this.dataService.purchases().find(p =>
+      p.id !== editingId && (p.invoice || '').trim().toLowerCase() === invoice.toLowerCase()
+    );
+    if (clash) {
+      this.notify.error(
+        this.prefs.txt(
+          `"${invoice}" ভাউচার নম্বরটি ইতিমধ্যে ব্যবহৃত হয়েছে। অন্য নম্বর দিন।`,
+          `Voucher "${invoice}" is already in use. Enter a different number.`
+        ),
+        this.prefs.txt('ভাউচার নম্বর ব্যবহৃত', 'Voucher number taken')
+      );
+      return;
+    }
+
     const total = this.grandTotal();
     if (this.paidAmount() > total) {
       this.notify.error(
@@ -869,7 +919,7 @@ export class AddPurchase implements OnInit {
     const formattedDate = `${isoDay}-${isoMonth}-${isoYear}`;
 
     const payload: Omit<Purchase, 'id'> = {
-      invoice: this.invoiceNo(),
+      invoice,
       warehouse: this.warehouse,
       date: formattedDate,
       supplierName: supplier,
@@ -894,9 +944,9 @@ export class AddPurchase implements OnInit {
       createdAt: this.editingPurchase?.createdAt || now.toISOString()
     };
 
-    const editingId = this.editPurchaseId();
     if (editingId !== null) {
       this.dataService.updatePurchase(editingId, payload);
+      this.session.log('Purchase Updated', `${payload.invoice} — ${payload.status} — ${payload.total.toFixed(2)} TK`);
       this.notify.success(
         this.prefs.txt(`${payload.invoice} আপডেট হয়েছে এবং স্টক সমন্বয় হয়েছে।`, `${payload.invoice} updated and stock reconciled.`),
         this.prefs.txt('ক্রয় আপডেট হয়েছে', 'Purchase updated')
@@ -906,6 +956,7 @@ export class AddPurchase implements OnInit {
     }
 
     const saved = this.dataService.recordPurchase(payload);
+    this.session.log('Purchase Created', `${saved.invoice} — ${saved.status} — ${(saved.total || 0).toFixed(2)} TK`);
 
     const quantity = this.items().reduce((sum, item) => sum + item.quantity, 0);
     // Stock only moves on Received; pending stages must not claim they added stock.

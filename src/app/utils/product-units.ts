@@ -16,6 +16,7 @@ type UnitProduct = Pick<Product, 'unit' | 'salesPrice' | 'wholesalePrice' | 'uni
 /**
  * Selling units for a product: the base unit first, then every configured extra
  * unit with its price (explicit, or derived from the base price × factor).
+ * A unit with factor 1 shares the stock count one-for-one (গজ/কেজি/পিস).
  */
 export function productUnitChoices(product: UnitProduct | null | undefined): UnitChoice[] {
   if (!product) return [];
@@ -35,7 +36,7 @@ export function productUnitChoices(product: UnitProduct | null | undefined): Uni
   for (const unit of product.units ?? []) {
     const name = (unit.name || '').trim();
     const factor = Number(unit.factor);
-    if (!name || !(factor > 0) || factor === 1) continue;
+    if (!name || !(factor > 0)) continue;
     if (choices.some(c => c.name.toLowerCase() === name.toLowerCase())) continue;
     const explicit = Number(unit.price);
     const price = explicit > 0 ? round2(explicit) : round2(basePrice * factor);

@@ -173,6 +173,19 @@ describe('DataService inventory and ledger lifecycles', () => {
     expect(data.products()[0].purchasePrice).toBe(70);
   });
 
+  it('starts the purchase voucher book at PUR-3001 and counts up from there', () => {
+    const { data } = setup();
+    expect(data.nextPurchaseInvoice()).toBe('PUR-3001');
+    purchase(data, { invoice: 'PUR-3004' });
+    expect(data.nextPurchaseInvoice()).toBe('PUR-3005');
+  });
+
+  it('ignores old five-digit purchase numbers when numbering fresh vouchers', () => {
+    const { data } = setup();
+    purchase(data, { invoice: 'PUR-30903' });
+    expect(data.nextPurchaseInvoice()).toBe('PUR-3001');
+  });
+
   it('keeps credit-note settlement in invoice and party due after a note-only sale edit', () => {
     const { data } = setup();
     data.products.set([product({ stock: 10 })]);
@@ -424,6 +437,263 @@ describe('Battery voucher party ledger', () => {
     expect(data.restoreRecycle(entry.id)).toBe('restored');
     expect(data.walletTransactions()).toHaveLength(1);
     expect(bookOf(data, seller.id, 'purchase')).toMatchObject({ total: 1000, paid: 400, due: 600 });
+  });
+});
+
+describe('Battery stock fund', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  const payload = (partyId: number, overrides: Partial<Omit<BatteryVoucher, 'id' | 'voucherNo'>> = {}) => ({
+    type: 'purchase' as const, date: '2026-11-10', partyName: 'Scrap Seller', partyId, lot: 'LOT-1',
+    lines: [], totalKg: 10, total: 1000, cash: 0, bank: 0, mobile: 0, mobileType: 'bKash' as const,
+    ref: '', paid: 400, due: 600, notes: '', preparedBy: 'Admin', createdAt: '2026-11-10T09:00:00.000Z',
+    ...overrides
+  });
+
+  const bookOf = (data: DataService, partyId: number) =>
+    accountOf(data.parties().find(p => p.id === partyId)!, 'purchase');
+
+  it('measures each party fund from unpaid purchase dues only', () => {
+    const { data } = setup();
+    const seller = data.addParty(party({ name: 'Scrap Seller', type: 'Supplier' }) as unknown as Omit<Party, 'id'>);
+    const other = data.addParty(party({ name: 'Other Seller', type: 'Supplier' }) as unknown as Omit<Party, 'id'>);
+    const customer = data.addParty(party({ name: 'Trade Customer' }));
+    data.addBatteryVoucher(payload(seller.id, { date: '2026-11-10' }));
+    data.addBatteryVoucher(payload(seller.id, { date: '2026-11-12', total: 500, paid: 200, due: 300 }));
+    data.addBatteryVoucher(payload(other.id, { date: '2026-11-11', total: 100, paid: 0, due: 100 }));
+    data.addBatteryVoucher(payload(customer.id, { paid: 1000, due: 0, source: 'sale-adjustment' }));
+
+    expect(data.batteryFundOfParty(seller.id)).toBe(900);
+    expect(data.batteryFundOfParty(other.id)).toBe(100);
+    expect(data.batteryFundOfParty(customer.id)).toBe(0);
+    expect(data.batteryFundAvailable()).toBe(1000);
+  });
+
+  it('settles the oldest due first and posts a supplier receipt plus a wallet Out', () => {
+    const { data } = setup();
+    const seller = data.addParty(party({ name: 'Scrap Seller', type: 'Supplier' }) as unknown as Omit<Party, 'id'>);
+    const first = data.addBatteryVoucher(payload(seller.id, { date: '2026-11-10' }));
+    const second = data.addBatteryVoucher(payload(seller.id, { date: '2026-11-12', total: 400, paid: 0, due: 400 }));
+
+    const result = data.transferBatteryFund({ partyId: seller.id, amount: 700, mode: 'Cash', date: '2026-11-15', note: 'Fund payout' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.transfer.transferNo).toBe('BFT-1001');
+    expect(result.transfer.allocations).toEqual([
+      { voucherId: first.id, voucherNo: first.voucherNo, amount: 600 },
+      { voucherId: second.id, voucherNo: second.voucherNo, amount: 100 }
+    ]);
+
+    expect(bookOf(data, seller.id)).toMatchObject({ total: 1400, paid: 1100, due: 300 });
+    const receipt = data.payments().find(p => p.id === result.transfer.paymentId)!;
+    expect(receipt).toMatchObject({ partyType: 'Supplier', amount: 700, batteryFundTransferId: result.transfer.id });
+    const rows = data.walletTransactions();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ direction: 'Out', amount: 700, source: 'Battery', refId: result.transfer.id });
+    expect(data.walletBalance(rows[0].accountId)).toBe(-700);
+    expect(data.batteryFundOfParty(seller.id)).toBe(300);
+    expect(data.batteryFundAllocatedFor(first.id)).toBe(600);
+  });
+
+  it('refuses more than the party fund and writes nothing', () => {
+    const { data } = setup();
+    const seller = data.addParty(party({ name: 'Scrap Seller', type: 'Supplier' }) as unknown as Omit<Party, 'id'>);
+    data.addBatteryVoucher(payload(seller.id));
+
+    const result = data.transferBatteryFund({ partyId: seller.id, amount: 600.02, mode: 'Cash', date: '2026-11-15', note: '' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('600.00');
+    expect(data.payments()).toHaveLength(0);
+    expect(data.walletTransactions()).toHaveLength(0);
+    expect(data.batteryFundTransfers()).toHaveLength(0);
+    expect(bookOf(data, seller.id)).toMatchObject({ total: 1000, paid: 400, due: 600 });
+  });
+
+  it('locks the receipt and the settled voucher until the transfer is reversed', () => {
+    const { data } = setup();
+    const seller = data.addParty(party({ name: 'Scrap Seller', type: 'Supplier' }) as unknown as Omit<Party, 'id'>);
+    const voucher = data.addBatteryVoucher(payload(seller.id));
+
+    const result = data.transferBatteryFund({ partyId: seller.id, amount: 600, mode: 'Cash', date: '2026-11-15', note: '' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const transfer = result.transfer;
+
+    expect(data.updatePayment(transfer.paymentId!, { amount: 100 })).toBeNull();
+    data.deletePayment(transfer.paymentId!);
+    expect(data.payments()).toHaveLength(1);
+    expect(bookOf(data, seller.id)).toMatchObject({ total: 1000, paid: 1000, due: 0 });
+
+    data.updateBatteryVoucher(voucher.id, payload(seller.id, { total: 900, paid: 400, due: 500 }));
+    expect(data.batteryVouchers()[0]).toMatchObject({ total: 1000, due: 600 });
+    data.deleteBatteryVoucher(voucher.id);
+    expect(data.batteryVouchers()).toHaveLength(1);
+
+    data.deleteBatteryFundTransfer(transfer.id);
+    expect(data.payments()).toHaveLength(0);
+    expect(data.walletTransactions()).toHaveLength(0);
+    expect(bookOf(data, seller.id)).toMatchObject({ total: 1000, paid: 400, due: 600 });
+    expect(data.batteryFundTransfers()).toHaveLength(0);
+    expect(data.batteryFundOfParty(seller.id)).toBe(600);
+    expect(data.recycleBin().some(e => e.collection === 'sm_battery_fund_transfers_v1')).toBe(true);
+  });
+
+  it('books the excess as advance when the supplier book already owes less', () => {
+    const { data } = setup();
+    const seller = data.addParty(party({ name: 'Scrap Seller', type: 'Supplier' }) as unknown as Omit<Party, 'id'>);
+    data.addBatteryVoucher(payload(seller.id));
+    data.recordPayment({
+      partyId: seller.id, partyName: seller.name, partyType: 'Supplier', side: 'purchase',
+      amount: 200, discount: 0, mode: 'Cash', date: '2026-11-14', note: 'Manual part payment'
+    });
+    expect(bookOf(data, seller.id)).toMatchObject({ total: 1000, paid: 600, due: 400 });
+
+    const result = data.transferBatteryFund({ partyId: seller.id, amount: 600, mode: 'Cash', date: '2026-11-15', note: '' });
+    expect(result.ok).toBe(true);
+    expect(bookOf(data, seller.id)).toMatchObject({ total: 1000, paid: 1200, due: 0, advance: 200 });
+    expect(data.walletTransactions().filter(r => r.direction === 'Out')).toHaveLength(1);
+  });
+});
+
+describe('Battery sale profit', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  const batteryPayload = (overrides: Partial<Omit<BatteryVoucher, 'id' | 'voucherNo'>>) => ({
+    type: 'purchase' as const, date: '2026-11-14', partyName: 'Scrap Seller', lot: 'LOT-1',
+    lines: [], totalKg: 0, total: 0, cash: 0, bank: 0, mobile: 0, mobileType: 'bKash' as const,
+    ref: '', paid: 0, due: 0, notes: '', preparedBy: 'Admin', createdAt: new Date().toISOString(),
+    ...overrides
+  });
+
+  const stockOf = (data: DataService) => data.addBatteryVoucher(batteryPayload({
+    lines: [{ kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 10, rate: 200 }],
+    totalKg: 10, total: 2000
+  }));
+
+  it('values a sale with no entered lot cost at the purchase lots it consumes', () => {
+    const { data } = setup();
+    stockOf(data);
+    const saleVoucher = data.addBatteryVoucher(batteryPayload({
+      type: 'sale',
+      lines: [{ kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 5, rate: 300 }],
+      totalKg: 5, total: 1500, cost: 0
+    }));
+    expect(data.batteryVoucherCost(saleVoucher)).toBe(1000);
+    expect(data.batteryVoucherProfit(saleVoucher)).toBe(500);
+    expect(data.batterySummary()).toMatchObject({ saleTotal: 1500, saleCost: 1000, profit: 500, incompleteSales: 0 });
+    // The five kilograms left in stock still carry their purchase value.
+    expect(data.batteryKindStock()).toContainEqual(expect.objectContaining({ key: 'scrap', qty: 5, value: 1000, avgRate: 200 }));
+  });
+
+  it('consumes the oldest purchase lot first across several lots', () => {
+    const { data } = setup();
+    data.addBatteryVoucher(batteryPayload({
+      date: '2026-11-10',
+      lines: [{ kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 10, rate: 200 }],
+      totalKg: 10, total: 2000
+    }));
+    data.addBatteryVoucher(batteryPayload({
+      date: '2026-11-12',
+      lines: [{ kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 10, rate: 250 }],
+      totalKg: 10, total: 2500
+    }));
+    const saleVoucher = data.addBatteryVoucher(batteryPayload({
+      type: 'sale', date: '2026-11-14',
+      lines: [{ kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 15, rate: 300 }],
+      totalKg: 15, total: 4500
+    }));
+    // 10 × 200 + 5 × 250 = 3250 against 4500 of revenue.
+    expect(data.batteryVoucherCost(saleVoucher)).toBe(3250);
+    expect(data.batteryVoucherProfit(saleVoucher)).toBe(1250);
+    // Only the dearer lot is left, valued at its own rate.
+    expect(data.batteryKindStock()).toContainEqual(expect.objectContaining({ key: 'scrap', qty: 5, value: 1250, avgRate: 250 }));
+  });
+
+  it('shows an incomplete purchase cost instead of counting the whole sale as profit', () => {
+    const { data } = setup();
+    const saleVoucher = data.addBatteryVoucher(batteryPayload({
+      type: 'sale',
+      lines: [{ kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 5, rate: 300 }],
+      totalKg: 5, total: 1500, cost: 0
+    }));
+    expect(data.batteryVoucherCostIncomplete(saleVoucher)).toBe(true);
+    expect(data.batteryVoucherProfit(saleVoucher)).toBe(0);
+    expect(data.batterySummary()).toMatchObject({ saleTotal: 1500, saleCost: 0, profit: 0, incompleteSales: 1 });
+  });
+
+  it('treats a partly costed sale as incomplete instead of costing only the covered kinds', () => {
+    const { data } = setup();
+    stockOf(data); // 10 kg scrap bought, nothing else
+    const lines = [
+      { kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg' as const, kg: 3, rate: 300 },
+      { kind: 'Water / UPS', kindKey: 'water', unit: 'kg' as const, kg: 2, rate: 400 }
+    ];
+    expect(data.batteryLinesCost(lines)).toBe(600);
+    expect(data.batteryLinesCostIncomplete(lines)).toBe(true);
+
+    const saleVoucher = data.addBatteryVoucher(batteryPayload({
+      type: 'sale', lines, totalKg: 5, total: 1700, cost: 0
+    }));
+    expect(data.batteryVoucherCostIncomplete(saleVoucher)).toBe(true);
+    expect(data.batteryVoucherProfit(saleVoucher)).toBe(0);
+  });
+
+  it('flags a line that is longer than the remaining lots of its own kind', () => {
+    const { data } = setup();
+    data.addBatteryVoucher(batteryPayload({
+      lines: [{ kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 4, rate: 200 }],
+      totalKg: 4, total: 800
+    }));
+    const lines = [{ kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg' as const, kg: 10, rate: 300 }];
+    expect(data.batteryLinesCost(lines)).toBe(800);
+    expect(data.batteryLinesCostIncomplete(lines)).toBe(true);
+  });
+
+  it('stops showing incomplete once a lot cost is set on the sale', () => {
+    const { data } = setup();
+    const saleVoucher = data.addBatteryVoucher(batteryPayload({
+      type: 'sale',
+      lines: [{ kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 5, rate: 300 }],
+      totalKg: 5, total: 1500, cost: 0
+    }));
+    data.setBatteryVoucherCost(saleVoucher.id, 1200);
+    const fixed = data.batteryVouchers().find(v => v.id === saleVoucher.id)!;
+    expect(data.batteryVoucherCostIncomplete(fixed)).toBe(false);
+    expect(data.batteryVoucherProfit(fixed)).toBe(300);
+    expect(data.batterySummary()).toMatchObject({ saleCost: 1200, profit: 300, incompleteSales: 0 });
+  });
+
+  it('keeps a typed lot cost as the cost basis', () => {
+    const { data } = setup();
+    stockOf(data);
+    const saleVoucher = data.addBatteryVoucher(batteryPayload({
+      type: 'sale',
+      lines: [{ kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 5, rate: 300 }],
+      totalKg: 5, total: 1500, cost: 900
+    }));
+    expect(data.batteryVoucherProfit(saleVoucher)).toBe(600);
+  });
+
+  it('costs each sold kind from its own purchase lots', () => {
+    const { data } = setup();
+    data.addBatteryVoucher(batteryPayload({
+      lines: [
+        { kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 10, rate: 200 },
+        { kind: 'UPS / MC', kindKey: 'ups', unit: 'kg', kg: 4, rate: 500 }
+      ],
+      totalKg: 14, total: 4000
+    }));
+    const saleVoucher = data.addBatteryVoucher(batteryPayload({
+      type: 'sale',
+      lines: [
+        { kind: 'Scrap / Powder', kindKey: 'scrap', unit: 'kg', kg: 2, rate: 260 },
+        { kind: 'UPS / MC', kindKey: 'ups', unit: 'kg', kg: 1, rate: 700 }
+      ],
+      totalKg: 3, total: 1220
+    }));
+    // 2 × 200 + 1 × 500 = 900 cost, so the margin is 320.
+    expect(data.batteryVoucherProfit(saleVoucher)).toBe(320);
   });
 });
 
@@ -1256,5 +1526,47 @@ describe('Payment promise reminders', () => {
     withDue(data, 1000);
     data.setPaymentPromise(1, { date: '2099-01-10', amount: 3000 });
     expect(promiseRemaining(data.parties()[0])).toBe(1000);
+  });
+});
+
+describe('Payment correction', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  it('reverses the old receipt before applying the corrected amount', () => {
+    const { data } = setup();
+    data.products.set([product({ stock: 100 })]);
+    data.parties.set([party()]);
+    sale(data, { items: [{ id: 1, productId: 10, productName: 'Battery', quantity: 5, unit: 'pcs', salesPrice: 100, total: 500 }], total: 500, paid: 0, due: 500, paymentStatus: 'Unpaid' });
+    const receipt = data.recordPayment({ partyId: 1, partyName: 'Customer', partyType: 'Customer', amount: 100, discount: 0, mode: 'Cash', date: '2026-11-11', note: 'typo' });
+    expect(data.parties()[0].salesDue).toBe(400);
+    expect(data.parties()[0].salesPaid).toBe(100);
+
+    const updated = data.updatePayment(receipt.id, { amount: 250, date: '2026-11-12', note: 'corrected' });
+
+    expect(updated).toMatchObject({ amount: 250, note: 'corrected', date: '2026-11-12', advance: 0 });
+    expect(data.parties()[0].salesDue).toBe(250);
+    expect(data.parties()[0].salesPaid).toBe(250);
+    expect(data.payments()).toHaveLength(1);
+  });
+
+  it('turns a shrunk overpayment back into a plain settlement with no advance', () => {
+    const { data } = setup();
+    data.products.set([product({ stock: 100 })]);
+    data.parties.set([party()]);
+    sale(data, { items: [{ id: 1, productId: 10, productName: 'Battery', quantity: 5, unit: 'pcs', salesPrice: 100, total: 500 }], total: 500, paid: 0, due: 500, paymentStatus: 'Unpaid' });
+    const receipt = data.recordPayment({ partyId: 1, partyName: 'Customer', partyType: 'Customer', amount: 800, discount: 0, mode: 'Cash', date: '2026-11-11', note: '' });
+    expect(data.parties()[0].salesDue).toBe(0);
+    expect(data.parties()[0].salesAdvance).toBe(300);
+
+    data.updatePayment(receipt.id, { amount: 200 });
+
+    expect(data.parties()[0].salesDue).toBe(300);
+    expect(data.parties()[0].salesPaid).toBe(200);
+    expect(data.parties()[0].salesAdvance).toBe(0);
+  });
+
+  it('reports a missing receipt instead of throwing', () => {
+    const { data } = setup();
+    expect(data.updatePayment(999, { amount: 10 })).toBeNull();
   });
 });

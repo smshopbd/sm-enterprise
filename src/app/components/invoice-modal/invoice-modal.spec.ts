@@ -16,7 +16,7 @@ function setup() {
   TestBed.configureTestingModule({ providers: [
     DataService,
     { provide: StorageService, useValue: { read: () => null, write: () => undefined, init: async () => undefined, onRemoteChange: () => () => undefined } },
-    { provide: PreferencesService, useValue: { txt: (_bn: string, en: string) => en } },
+    { provide: PreferencesService, useValue: { txt: (_bn: string, en: string) => en, language: () => 'en' } },
     { provide: NotificationService, useValue: { show: () => undefined, success: () => undefined, error: () => undefined } },
     { provide: CloudService, useValue: { isEnabled: () => false } }
   ] });
@@ -69,6 +69,58 @@ describe('InvoiceModal warranty block', () => {  beforeAll(() => {
     const text = fixture.nativeElement.textContent as string;
     expect(text).toContain('New Serial: NEW-SERIAL-2');
     expect(text).not.toContain('OLD-SERIAL-1');
+  });
+});
+
+describe('InvoiceModal commercial header', () => {
+  beforeAll(() => {
+    (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver ??= ResizeObserverStub;
+  });
+
+  function sale(overrides: Partial<Sale> = {}): Sale {
+    return {
+      id: 2, invoice: 'INV-COMM', warehouse: 'SM Warehouse', date: '2026-11-24',
+      customerName: 'Customer', preparedBy: 'Admin', status: 'Completed', total: 100,
+      paid: 100, due: 0, paymentStatus: 'Paid', nextPayDate: '', notes: '',
+      items: [{ id: 1, productId: 10, productName: 'Battery', quantity: 1, unit: 'pcs', salesPrice: 100, total: 100 }],
+      ...overrides
+    };
+  }
+
+  it('stamps the voucher from the remaining balance', () => {
+    setup();
+    const fixture = TestBed.createComponent(InvoiceModal);
+    fixture.componentRef.setInput('sale', sale());
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.sp-stamp').textContent).toContain('PAID');
+  });
+
+  it('marks a cancelled sale and drops the payment stamp', () => {
+    setup();
+    const fixture = TestBed.createComponent(InvoiceModal);
+    fixture.componentRef.setInput('sale', sale({ status: 'Cancelled', paid: 0, due: 100 }));
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.sp-cancelled').textContent).toContain('CANCELLED');
+    expect(fixture.nativeElement.querySelector('.sp-stamp')).toBeNull();
+  });
+
+  it('labels each copy on a multi-copy sheet', () => {
+    const data = setup();
+    data.updateVoucherSettings({ copiesPerPage: 2 });
+    const fixture = TestBed.createComponent(InvoiceModal);
+    fixture.componentRef.setInput('sale', sale());
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('Customer Copy');
+    expect(text).toContain('Office Copy');
+  });
+
+  it('writes the total in words under the split', () => {
+    setup();
+    const fixture = TestBed.createComponent(InvoiceModal);
+    fixture.componentRef.setInput('sale', sale());
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.sp-words').textContent).toContain('One Hundred');
   });
 });
 

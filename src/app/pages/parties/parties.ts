@@ -1964,6 +1964,8 @@ export class Parties {
             'Party Opening Changed',
             `${existing.name} — ওপেনিং ${oldSigned} → ${newSigned} (বাকি সমন্বিত)`
           );
+        } else {
+          this.session.log('Party Updated', `${existing.name} — ${mappedType}`);
         }
         this.openingSaveUnlock.set(false);
         this.openingSaveUnlocked = false;
@@ -2014,6 +2016,7 @@ export class Parties {
         addressText: this.formAddressText || undefined,
         geofencing: this.formGeofencing
       });
+      this.session.log('Party Created', `${cleanName} — ${mappedType} — ওপেনিং ${opening}`);
       this.notify.success(this.prefs.txt(`নতুন পার্টি সংরক্ষিত হয়েছে: ${cleanName}`, `New party saved: ${cleanName}`));
     }
 
@@ -2031,7 +2034,9 @@ export class Parties {
       }
     );
     if (confirmed) {
+      const name = this.dataService.parties().find(p => p.id === id)?.name ?? `#${id}`;
       this.dataService.deleteParty(id);
+      this.session.log('Party Deleted', name);
       this.notify.success(this.prefs.txt('পার্টি মুছে ফেলা হয়েছে।', 'Party deleted.'));
     }
   }

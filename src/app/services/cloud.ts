@@ -118,7 +118,7 @@ const NEVER_SYNC = [CLOUD_CONFIG_KEY, BACKEND_VERSION_KEY, SYNC_CONFLICTS_KEY, '
  * DataService collections, but they still have to reach the shop's other
  * devices; the sync loops below treat them as extra collections.
  */
-const EXTRA_SYNC_KEYS = ['sm_users_v1', 'sm_audit_v1', 'sm_backup_index_v1'];
+const EXTRA_SYNC_KEYS = ['sm_users_v1', 'sm_audit_v2', 'sm_backup_index_v1'];
 /** Shared invoice counters; ignored by the data sync because no page owns it. */
 const COUNTER_COLLECTION = '__counters';
 /** Marks a deleted row. The value is when it was deleted; readers drop the item. */
@@ -129,6 +129,9 @@ const SYNCED_IDS_KEY = 'sm_sync_ids_v1';
 const SYNC_SIGS_KEY = 'sm_sync_sigs_v1';
 /** Per collection: newest remote `updated_at` this device already applied. */
 const PULL_MARKS_KEY = 'sm_pull_marks_v1';
+/** Collections edited here whose rows the server has not accepted yet. */
+const OUTBOX_KEY = 'sm_sync_outbox_v1';
+const UPLOAD_FAILED_PREFIX = 'আপলোড হয়নি: ';
 /** A write can commit just after our read with an older stamp; re-read this window. */
 const PULL_OVERLAP_MS = 120_000;
 
@@ -195,6 +198,12 @@ export class CloudService {
   private editTimes = new Map<string, Map<string, string>>();
   /** collection -> newest remote timestamp already applied; keeps pulls incremental. */
   private pulledAt = new Map<string, string>();
+  /**
+   * Collections this device edited and the server has not accepted yet. Unlike
+   * the page scope, this survives navigation and reloads, so a sale saved just
+   * before the network dropped is retried until it actually lands.
+   */
+  private outbox = new Set<string>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private applyingRemote = false;
   private realtime?: { remove: () => void };
@@ -324,8 +333,14 @@ export class CloudService {
   private async beginSync(): Promise<void> {
     if (!this.canAutoSync()) return;
     try {
-      if (!this.keyVerified && !(await this.verifyKey())) return;
+      if (!this.keyVerified && !(await this.verifyKey())) {
+        // Staying quiet here is how a device keeps saving locally while its
+        // owner believes the shop is in the cloud. Report it and keep retrying.
+        this.reportGateClosed();
+        return;
+      }
       await this.resumeSync();
+      await this.retryOutbox();
     } catch (error) {
       // Fire-and-forget callers (reload, focus, poll) must not raise an
       // unhandled rejection; the status badge and retry timer take over.
@@ -367,6 +382,27 @@ export class CloudService {
     // A recent timestamp says nothing about updates missed while disconnected,
     // so the open page still re-reads its own collections.
     await this.syncPage(this.activeScope);
+  }
+
+  /**
+   * A failed upload is shown as the persistent sync chip in the header, with
+   * the reason in its tooltip — never as a popup that returns on every retry.
+   */
+  private noteUploadFailure(error: unknown): void {
+    this.status.set('error');
+    this.statusMessage.set(UPLOAD_FAILED_PREFIX + (error instanceof Error ? error.message : String(error)));
+    this.scheduleRetry();
+  }
+
+  private syncBlockedMessage(): string {
+    return 'ক্লাউডের সাথে সংযোগ যাচাই হয়নি — পাসওয়ার্ড ও ইন্টারনেট দেখুন। সংরক্ষিত ডেটা এই ডিভাইসে আছে, ইন্টারনেট ঠিক হলে নিজেই আপলোড হবে।';
+  }
+
+  /** A closed gate must look closed: red badge, a reason, and a retry. */
+  private reportGateClosed(): void {
+    this.status.set('error');
+    this.statusMessage.set(this.syncBlockedMessage());
+    this.scheduleRetry();
   }
 
   private scheduleRetry(): void {
@@ -423,6 +459,7 @@ export class CloudService {
       this.pushed.clear();
       this.editTimes.clear();
       this.pulledAt.clear();
+      this.outbox.clear();
       this.warehouseIds.clear();
       this.syncConflicts.set([]);
       this.restoreIntent.set(null);
@@ -1088,6 +1125,7 @@ export class CloudService {
     this.pushed = this.readPushedSigs();
     this.editTimes = this.readEditTimes();
     this.pulledAt = this.readPullMarks();
+    this.outbox = new Set(this.readMetadata<string[]>(OUTBOX_KEY) ?? []);
     this.warehouseIds = new Map(Object.entries(this.readMetadata<Record<string, string>>(WAREHOUSE_IDS_KEY) ?? {}));
     this.syncConflicts.set(this.storage.read<CloudSyncConflict[]>(this.scopedKey(SYNC_CONFLICTS_KEY)) ?? []);
     this.restoreIntent.set(this.storage.read<RestoreSyncIntent>(this.scopedKey(RESTORE_SYNC_INTENT_KEY)) ?? null);
@@ -1140,6 +1178,7 @@ export class CloudService {
       localStorage.setItem(this.scopedKey(SYNC_TIMES_KEY), JSON.stringify(Object.fromEntries([...this.editTimes].map(([key, rows]) => [key, Object.fromEntries(rows)]))));
       localStorage.setItem(this.scopedKey(WAREHOUSE_IDS_KEY), JSON.stringify(Object.fromEntries(this.warehouseIds)));
       localStorage.setItem(this.scopedKey(PULL_MARKS_KEY), JSON.stringify(Object.fromEntries(this.pulledAt)));
+      localStorage.setItem(this.scopedKey(OUTBOX_KEY), JSON.stringify([...this.outbox]));
     } catch {
       // Never claim persistence succeeded: a reload without a baseline will
       // conservatively conflict rather than overwrite an unseen server value.
@@ -1341,7 +1380,13 @@ export class CloudService {
     let changed = false;
     for (const row of this.rows(key)) {
       present.add(row.rowId);
-      if (seen?.get(row.rowId) === signature(row.data)) {
+      const acknowledged = seen?.get(row.rowId);
+      if (acknowledged === signature(row.data)) {
+        if (times.delete(row.rowId)) changed = true;
+      } else if (acknowledged?.startsWith('deleted:')) {
+        // The server tombstoned this row and this device still holds a copy.
+        // A whole-array rewrite must not stamp that leftover as a fresh edit,
+        // otherwise it would be uploaded again and undo the deletion.
         if (times.delete(row.rowId)) changed = true;
       } else if (!times.has(row.rowId)) {
         times.set(row.rowId, now);
@@ -1527,6 +1572,12 @@ export class CloudService {
     // win later against an older server copy. Startup writes happen before a
     // login and must not make cached rows look freshly edited.
     if (this.userKeyValue) this.stampLocalEdits(key);
+    // Remember the edit before any network decision: a save that never reached
+    // the server (offline, gate not verified, app closed) must still ship later.
+    if (!this.outbox.has(key)) {
+      this.outbox.add(key);
+      this.markMetadataDirty();
+    }
     if (!this.canAutoSync()) return;
     const timer = this.timers.get(key);
     if (timer) clearTimeout(timer);
@@ -1539,11 +1590,10 @@ export class CloudService {
         // reset wins, otherwise the stale rows would be uploaded again.
         if (await this.applyPendingReset()) return;
         if (this.canAutoSync()) await this.pushCollectionInternal(key);
-      }).catch(error => {
-        this.status.set('error');
-        this.statusMessage.set(error instanceof Error ? error.message : String(error));
-        this.scheduleRetry();
-      });
+      }).then(
+        () => { this.dropFromOutboxIfLanded(key); this.flushMetadata(); },
+        error => this.noteUploadFailure(error)
+      );
     }, 1500));
     this.refreshPending();
   }
@@ -1569,8 +1619,72 @@ export class CloudService {
       this.assertOrdinary();
       if (await this.applyPendingReset()) return 0;
       const count = await this.pushCollectionInternal(key);
+      this.dropFromOutboxIfLanded(key);
       this.flushMetadata();
       return count;
+    });
+  }
+
+  /** A collection leaves the outbox only once nothing in it is still unsent. */
+  private dropFromOutboxIfLanded(key: string): boolean {
+    if (!this.outbox.has(key) || this.pendingCount(key)) return false;
+    this.outbox.delete(key);
+    this.markMetadataDirty();
+    return true;
+  }
+
+  /**
+   * Anything the server has not accepted yet belongs in the outbox, even when
+   * the edit came from a build or a tab that never recorded it (an older app
+   * version, or a save that landed while that page was closing).
+   */
+  private seedOutbox(): void {
+    for (const key of this.collectionKeys()) {
+      if (this.outbox.has(key) || !this.pendingCount(key)) continue;
+      this.outbox.add(key);
+      this.markMetadataDirty();
+    }
+  }
+
+  /**
+   * Uploads every collection this device changed, whatever page is open. The
+   * page scope only decides what to *read*; a failed upload must never wait for
+   * the user to return to the page that produced it.
+   */
+  private retryOutbox(): Promise<void> {
+    this.seedOutbox();
+    if (!this.outbox.size) return Promise.resolve();
+    return this.enqueue(async () => {
+      if (!this.canAutoSync()) return;
+      let failed = false;
+      for (const key of [...this.outbox]) {
+        if (!this.canAutoSync()) return;
+        if (!this.collectionKeys().includes(key)) {
+          this.outbox.delete(key);
+          continue;
+        }
+        if (!this.pendingCount(key)) {
+          this.outbox.delete(key);
+          continue;
+        }
+        try {
+          await this.pushCollectionInternal(key);
+          this.dropFromOutboxIfLanded(key);
+        } catch (error) {
+          failed = true;
+          this.noteUploadFailure(error);
+          break;
+        }
+      }
+      this.markMetadataDirty();
+      this.flushMetadata();
+      this.scheduleRefreshPending();
+      // Clear only the warning this loop raised; a pull error keeps its message.
+      if (!failed && !this.outbox.size && this.statusMessage().startsWith(UPLOAD_FAILED_PREFIX)) {
+        this.status.set('online');
+        this.statusMessage.set('');
+      }
+      if (failed) this.scheduleRetry();
     });
   }
 
@@ -1680,7 +1794,7 @@ export class CloudService {
     const current = () => generation === this.pageSyncGeneration;
     return this.enqueue(async () => {
       if (!current()) return;
-      if (!this.keyVerified && !(await this.verifyKey())) return;
+      if (!this.keyVerified && !(await this.verifyKey())) { this.reportGateClosed(); return; }
       // An already-verified device still has to notice another device's hard
       // reset, otherwise its cached rows would be uploaded again.
       if (this.keyVerified && (await this.applyPendingReset())) return;
@@ -1691,12 +1805,25 @@ export class CloudService {
       await this.pullCollections(target, current);
       for (const key of target) {
         if (!current() || !this.pendingCount(key)) continue;
-        await this.pushCollectionInternal(key);
+        try {
+          await this.pushCollectionInternal(key);
+          this.dropFromOutboxIfLanded(key);
+        } catch (error) {
+          // A pull problem and an upload problem need different words: the
+          // shop keeps working, but the other devices do not have this edit yet.
+          this.noteUploadFailure(error);
+          break;
+        }
       }
       this.flushMetadata();
       this.config.update(c => ({ ...c, lastPullAt: new Date().toISOString() }));
       this.writeConfig();
       if (client) await this.readLastRemoteAt(client).catch(() => undefined);
+      // The gate just proved itself; a warning left from a closed gate is stale.
+      if (this.status() === 'error' && this.statusMessage() === this.syncBlockedMessage()) {
+        this.status.set('online');
+        this.statusMessage.set('');
+      }
       if (!this.realtime) await this.subscribeRealtime();
     }).catch(error => {
       this.status.set('error');
@@ -1767,6 +1894,7 @@ export class CloudService {
     if (this.restoreIntent()) throw new Error('রিস্টোর করা ডেটা আগে স্পষ্টভাবে মিলিয়ে নিন।');
     for (const key of this.collectionKeys()) {
       if (await this.pushCollectionInternal(key, report)) report.collections++;
+      this.dropFromOutboxIfLanded(key);
     }
     this.flushMetadata();
   }
@@ -1937,7 +2065,7 @@ export class CloudService {
   async boot(_forcePull = false, keys?: string[]): Promise<void> {
     // After a reload the key is not verified yet; pulling before that returns an
     // RLS-empty shop and would look like every local row was deleted.
-    if (!this.keyVerified && !(await this.verifyKey())) return;
+    if (!this.keyVerified && !(await this.verifyKey())) { this.reportGateClosed(); return; }
     if (this.keyVerified && (await this.applyPendingReset())) return;
     if (!this.canAutoSync()) return;
     const target = this.scopedKeys(keys?.length ? keys : this.activeScope);
@@ -1950,6 +2078,7 @@ export class CloudService {
         await this.pullCollections(target);
         for (const key of target) {
           if (this.pendingCount(key) && await this.pushCollectionInternal(key, result)) result.collections++;
+          this.dropFromOutboxIfLanded(key);
         }
         this.flushMetadata();
       } else {
@@ -1965,6 +2094,8 @@ export class CloudService {
     this.status.set(report.conflicts ? 'error' : 'online');
     this.statusMessage.set(report.conflicts ? `${report.conflicts} সংঘাত — সেটিংস থেকে পর্যালোচনা করুন।` : `${report.pulled} সারি মিলিয়ে দেখা হয়েছে`);
     if (report.conflicts) this.cancelScheduling();
+    // A sale saved before the last reload may still be only on this device.
+    void this.retryOutbox().catch(() => undefined);
   }
 
   /** Maintenance only: preserve identities and propagate deletions to every device. */
@@ -2158,13 +2289,14 @@ export class CloudService {
     this.pushed.clear();
     this.editTimes.clear();
     this.pulledAt.clear();
+    this.outbox.clear();
     this.warehouseIds.clear();
     this.syncConflicts.set([]);
     this.restoreIntent.set(null);
     this.config.update(c => ({ ...c, lastPushAt: null, lastPullAt: null, lastRemoteAt: null }));
     this.writeConfig();
     try {
-      for (const key of [SYNCED_IDS_KEY, SYNC_SIGS_KEY, SYNC_TIMES_KEY, WAREHOUSE_IDS_KEY, PULL_MARKS_KEY,
+      for (const key of [SYNCED_IDS_KEY, SYNC_SIGS_KEY, SYNC_TIMES_KEY, WAREHOUSE_IDS_KEY, PULL_MARKS_KEY, OUTBOX_KEY,
         SYNC_CONFLICTS_KEY, RESTORE_SYNC_INTENT_KEY,
         ...(keepLogin ? [] : [SESSION_STORAGE_KEY])]) {
         localStorage.removeItem(this.scopedKey(key));

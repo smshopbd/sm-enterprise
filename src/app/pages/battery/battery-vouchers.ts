@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
-import { BATTERY_KINDS, BatteryKind, BatteryKindStock, BatteryLine, BatteryStockRow, BatteryUnit, BatteryVoucher, BatteryVoucherType, DataService, Party, batteryKindByKey } from '../../services/data';
+import { BATTERY_KINDS, BatteryFundTransfer, BatteryKind, BatteryKindStock, BatteryLine, BatteryStockRow, BatteryUnit, BatteryVoucher, BatteryVoucherType, DataService, LEDGER_MODES, LedgerPayment, Party, batteryKindByKey } from '../../services/data';
 import { PreferencesService } from '../../services/preferences';
 import { NotificationService } from '../../services/notification';
 import { SessionService } from '../../services/session';
@@ -81,6 +81,12 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
             </div>
           }
         </div>
+        @if (summary().incompleteSales > 0) {
+          <p class="flex items-center gap-1.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+            <mat-icon class="text-sm">info</mat-icon>
+            {{ prefs.txt(summary().incompleteSales + 'টি বিক্রয়ের ক্রয়খরচ পাওয়া যায়নি — সেগুলো লাভে ধরা হয়নি। ভাউচারে খরচ বসালে হিসাব যোগ হবে।', summary().incompleteSales + ' sale(s) have no purchase cost — kept out of profit until a cost is set on the voucher.') }}
+          </p>
+        }
       } @else if (view() === 'vouchers') {
         <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
           @for (card of voucherCards(); track card.label) {
@@ -263,8 +269,21 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
             @if (type() === 'sale') {
               <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 sm:w-1/2">
                 {{ prefs.txt('বিক্রিত লটের মোট খরচ', 'Total cost of sold lot') }}
-                <input type="number" min="0" step="0.01" [ngModel]="cost()" (ngModelChange)="cost.set(+$event)" class="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm" />
-                <span class="text-[10px] text-slate-400">{{ prefs.txt('গড় ক্রয়মূল্য', 'Avg purchase cost') }}: {{ summary().avgCostPerKg.toFixed(2) }} {{ prefs.txt('প্রতি কেজি', 'per kg') }} · {{ prefs.txt('বর্তমান স্টক', 'In stock') }}: {{ summary().stockKg | qty:'kg' }} {{ prefs.txt('কেজি', 'kg') }}@if (summary().stockPcs > 0) {<span> · {{ summary().stockPcs | qty:'pcs' }} {{ prefs.txt('পিস', 'pcs') }}</span>}</span>
+                <input type="number" min="0" step="0.01" [ngModel]="displayCost()" (ngModelChange)="onCostInput($event)" class="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm" />
+                <span class="flex flex-wrap items-center gap-x-2 text-[10px] text-slate-400">
+                  @if (costManual()) {
+                    <span>{{ prefs.txt('লটের খরচ হাতে লেখা হয়েছে', 'Lot cost entered manually') }}</span>
+                    <button type="button" (click)="resetCostToAuto()" class="cursor-pointer font-bold text-teal-600 hover:underline dark:text-teal-300">{{ prefs.txt('অটোতে ফেরান', 'Use auto') }}</button>
+                  } @else if (autoIncomplete()) {
+                    <span class="font-bold text-amber-600 dark:text-amber-400">{{ prefs.txt('ক্রয় খরচ: ক্রয়খরচ অসম্পূর্ণ', 'Lot cost: purchase cost incomplete') }}</span>
+                  } @else {
+                    <span>{{ prefs.txt('ক্রয় লটের দরে অটো হিসাব', 'Auto at purchase lot cost') }}: <strong class="text-teal-600 dark:text-teal-300">{{ autoCost().toFixed(2) }} TK</strong></span>
+                  }
+                  <span>· {{ prefs.txt('গড় ক্রয়মূল্য', 'Avg purchase cost') }}: {{ summary().avgCostPerKg.toFixed(2) }} {{ prefs.txt('প্রতি কেজি', 'per kg') }} · {{ prefs.txt('বর্তমান স্টক', 'In stock') }}: {{ summary().stockKg | qty:'kg' }} {{ prefs.txt('কেজি', 'kg') }}@if (summary().stockPcs > 0) {<span> · {{ summary().stockPcs | qty:'pcs' }} {{ prefs.txt('পিস', 'pcs') }}</span>}</span>
+                </span>
+                @if (!costManual() && autoIncomplete()) {
+                  <span class="mt-1 block rounded bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700 dark:bg-amber-950 dark:text-amber-300">{{ prefs.txt('এই স্টকের ক্রয়খরচ পাওয়া যাচ্ছে না — খরচ লিখুন, নয়তো ভাউচারে ‘ক্রয়খরচ অসম্পূর্ণ’ দেখাবে।', 'No purchase cost found for this stock — enter the cost, or the voucher will read “purchase cost incomplete”.') }}</span>
+                }
               </label>
             }
           }
@@ -474,6 +493,77 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
             </div>
           }
         </div>
+
+        <!-- Battery stock fund -->
+        <div class="rounded-2xl border border-amber-200 bg-white p-4 dark:border-amber-900/60 dark:bg-slate-900">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <span class="grid size-10 place-items-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"><mat-icon>account_balance</mat-icon></span>
+              <div>
+                <p class="text-[10px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-400">{{ prefs.txt('ব্যাটারি স্টক ফান্ড', 'Battery stock fund') }}</p>
+                <p class="font-mono text-2xl font-black text-amber-700 dark:text-amber-300">{{ fundBalance() | number:'1.2-2' }} <span class="text-xs">TK</span></p>
+                <p class="text-[10px] text-slate-500 dark:text-slate-400">{{ prefs.txt('কেনা ব্যাটারির বাকি টাকা — এখান থেকে পার্টিকে দিলে তার বাকি স্বয়ংক্রিয়ভাবে কমবে।', 'Unpaid battery purchases — sending it to the seller settles the due automatically.') }}</p>
+              </div>
+            </div>
+            <div class="text-right">
+              <p class="text-[10px] text-slate-400">{{ prefs.txt('ফান্ড থেকে মোট পরিশোধ', 'Paid from fund') }}</p>
+              <p class="font-mono text-sm font-bold text-slate-700 dark:text-slate-200">{{ fundTransferredTotal() | number:'1.2-2' }} TK</p>
+              <button type="button" (click)="openFundTransfer()" [disabled]="fundBalance() <= 0"
+                class="mt-1.5 inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50">
+                <mat-icon class="text-sm">swap_horiz</mat-icon> {{ prefs.txt('ফান্ড ট্রান্সফার', 'Transfer fund') }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        @if (fundTransfers().length) {
+          <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
+              <h2 class="flex items-center gap-1.5 text-sm font-extrabold text-slate-700 dark:text-slate-200">
+                <mat-icon class="text-base text-amber-500">receipt_long</mat-icon>
+                {{ prefs.txt('ফান্ড ট্রান্সফার হিসাব', 'Fund transfer history') }}
+                <span class="rounded-full bg-amber-50 px-1.5 py-0.5 font-mono text-[9px] font-bold text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">{{ fundTransfers().length }}</span>
+              </h2>
+              <p class="text-[10px] text-slate-400">{{ prefs.txt('প্রতিটি ট্রান্সফার পার্টির হিসাবে রশিদ হিসেবে বসেছে।', 'Each transfer is posted as a receipt in the party book.') }}</p>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500 dark:bg-slate-800">
+                  <tr>
+                    <th class="px-3 py-2">{{ prefs.txt('ট্রান্সফার', 'Transfer') }}</th>
+                    <th class="px-3 py-2">{{ prefs.txt('পার্টি', 'Party') }}</th>
+                    <th class="px-3 py-2">{{ prefs.txt('অ্যাকাউন্ট', 'Account') }}</th>
+                    <th class="px-3 py-2 text-right">{{ prefs.txt('টাকা', 'Amount') }}</th>
+                    <th class="px-3 py-2">{{ prefs.txt('যে ভাউচারগুলো পরিশোধ হলো', 'Vouchers settled') }}</th>
+                    <th class="px-3 py-2 text-center">{{ prefs.txt('অ্যাকশন', 'Action') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (t of fundTransfers(); track t.id) {
+                    <tr class="border-b border-slate-100 dark:border-slate-800">
+                      <td class="px-3 py-2">
+                        <p class="font-mono font-bold text-slate-800 dark:text-slate-100">{{ t.transferNo }}</p>
+                        <p class="text-[9.5px] text-slate-400">{{ dateLabel(t.date) }}</p>
+                      </td>
+                      <td class="px-3 py-2">{{ t.partyName }}</td>
+                      <td class="px-3 py-2">
+                        <span class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{{ t.mode }}</span>
+                      </td>
+                      <td class="px-3 py-2 text-right font-mono font-bold text-amber-700 dark:text-amber-300">{{ t.amount | number:'1.2-2' }}</td>
+                      <td class="px-3 py-2 font-mono text-[10px] text-slate-500 dark:text-slate-400">{{ fundAllocationLabel(t) || '—' }}</td>
+                      <td class="px-3 py-2 text-center">
+                        <button type="button" (click)="requestFundDelete(t)" [title]="prefs.txt('ফান্ড ট্রান্সফার ফেরত নিন (Admin PIN)', 'Reverse fund transfer (Admin PIN)')"
+                          class="cursor-pointer rounded-md p-1 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-300">
+                          <mat-icon class="text-base">lock_open</mat-icon>
+                        </button>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        }
 
         <!-- Filters -->
         <div class="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
@@ -836,9 +926,19 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
                     }
                   </td>
                   <td class="px-3 py-2 text-right font-bold">{{ v.total.toFixed(2) }}</td>
-                  <td class="px-3 py-2 text-right">{{ v.paid.toFixed(2) }}</td>
-                  <td class="px-3 py-2 text-right" [class.text-rose-600]="v.due > 0">{{ v.due.toFixed(2) }}</td>
-                  <td class="px-3 py-2 text-right font-bold" [class.text-teal-600]="profitOf(v) >= 0" [class.text-rose-600]="profitOf(v) < 0">{{ profitOf(v).toFixed(2) }}</td>
+                  <td class="px-3 py-2 text-right">{{ v.paid.toFixed(2) }}
+                    @if (fundAllocated(v) > 0) {
+                      <span class="block text-[9px] font-bold text-amber-600 dark:text-amber-400" [title]="prefs.txt('ব্যাটারি ফান্ড থেকে পরিশোধ', 'Paid from battery fund')">+{{ fundAllocated(v) | number:'1.2-2' }} {{ prefs.txt('ফান্ড', 'fund') }}</span>
+                    }
+                  </td>
+                  <td class="px-3 py-2 text-right" [class.text-rose-600]="fundDueLeft(v) > 0">{{ fundDueLeft(v).toFixed(2) }}</td>
+                  <td class="px-3 py-2 text-right font-bold">
+                    @if (v.type === 'sale' && costIncomplete(v)) {
+                      <span class="text-[9px] font-black text-amber-600 dark:text-amber-400" [title]="prefs.txt('এই বিক্রয়ের স্টকের ক্রয়খরচ পাওয়া যায়নি', 'No purchase cost found for the stock behind this sale')">{{ prefs.txt('ক্রয়খরচ অসম্পূর্ণ', 'Cost incomplete') }}</span>
+                    } @else {
+                      <span [class.text-teal-600]="profitOf(v) >= 0" [class.text-rose-600]="profitOf(v) < 0">{{ profitOf(v).toFixed(2) }}</span>
+                    }
+                  </td>
                   <td class="px-3 py-2">
                     <div class="flex justify-center gap-1">
                       <button (click)="viewVoucher(v)" class="p-1 text-slate-500 hover:text-teal-600 cursor-pointer" [title]="prefs.txt('ভাউচার দেখুন', 'View voucher')"><mat-icon class="text-base">visibility</mat-icon></button>
@@ -857,7 +957,12 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
                   <td class="px-3 py-2 text-right">{{ historyTotals().total | number:'1.2-2' }}</td>
                   <td class="px-3 py-2 text-right">{{ historyTotals().paid | number:'1.2-2' }}</td>
                   <td class="px-3 py-2 text-right" [class.text-rose-600]="historyTotals().due > 0">{{ historyTotals().due | number:'1.2-2' }}</td>
-                  <td class="px-3 py-2 text-right" [class.text-teal-600]="historyTotals().profit >= 0" [class.text-rose-600]="historyTotals().profit < 0">{{ historyTotals().profit | number:'1.2-2' }}</td>
+                  <td class="px-3 py-2 text-right">
+                    <span [class.text-teal-600]="historyTotals().profit >= 0" [class.text-rose-600]="historyTotals().profit < 0">{{ historyTotals().profit | number:'1.2-2' }}</span>
+                    @if (historyTotals().incomplete) {
+                      <span class="block text-[9px] font-normal text-amber-600 dark:text-amber-400">+{{ historyTotals().incomplete }} {{ prefs.txt('ক্রয়খরচ অসম্পূর্ণ', 'cost incomplete') }}</span>
+                    }
+                  </td>
                   <td></td>
                 </tr>
               </tfoot>
@@ -1030,11 +1135,14 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
                   </div>
                   <div class="rounded-lg bg-teal-50 p-2 dark:bg-teal-950/40">
                     <p class="text-[9px] text-teal-600 dark:text-teal-400">{{ prefs.txt('পরিশোধ', 'Paid') }}</p>
-                    <p class="font-bold text-teal-700 dark:text-teal-300">{{ v.paid | number:'1.2-2' }}</p>
+                    <p class="font-bold text-teal-700 dark:text-teal-300">{{ fundPaidTotal(v) | number:'1.2-2' }}</p>
+                    @if (fundAllocated(v) > 0) {
+                      <p class="text-[8.5px] font-bold text-amber-600 dark:text-amber-400">{{ prefs.txt('এর মধ্যে ফান্ড', 'fund') }} {{ fundAllocated(v) | number:'1.2-2' }}</p>
+                    }
                   </div>
                   <div class="rounded-lg bg-rose-50 p-2 dark:bg-rose-950/40">
                     <p class="text-[9px] text-rose-500 dark:text-rose-400">{{ prefs.txt('বাকি', 'Due') }}</p>
-                    <p class="font-bold text-rose-600 dark:text-rose-300">{{ v.due | number:'1.2-2' }}</p>
+                    <p class="font-bold text-rose-600 dark:text-rose-300">{{ fundDueLeft(v) | number:'1.2-2' }}</p>
                   </div>
                 </div>
                 <div class="grid grid-cols-2 gap-1.5 pt-1 text-[11px]">
@@ -1046,7 +1154,11 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
                 @if (v.type === 'sale' || v.type === 'exchange') {
                   <div class="flex justify-between border-t border-slate-100 pt-1.5 text-[11px] dark:border-slate-800">
                     <span class="text-slate-500 dark:text-slate-400">{{ v.type === 'sale' ? prefs.txt('বিক্রয় লাভ', 'Sale profit') : prefs.txt('বদলি আয়', 'Exchange income') }}</span>
-                    <strong [class]="profitOf(v) < 0 ? 'text-rose-600' : 'text-emerald-600'">{{ profitOf(v) | number:'1.2-2' }} TK</strong>
+                    @if (v.type === 'sale' && costIncomplete(v)) {
+                      <strong class="text-amber-600 dark:text-amber-400">{{ prefs.txt('ক্রয়খরচ অসম্পূর্ণ', 'Cost incomplete') }}</strong>
+                    } @else {
+                      <strong [class]="profitOf(v) < 0 ? 'text-rose-600' : 'text-emerald-600'">{{ profitOf(v) | number:'1.2-2' }} TK</strong>
+                    }
                   </div>
                 }
                 @if (v.type === 'exchange') {
@@ -1077,6 +1189,94 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
           </div>
         </div>
       </div>
+    }
+
+    @if (showFundTransfer()) {
+      <div class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/60 p-4 backdrop-blur-sm" (click)="closeFundTransfer()">
+        <div class="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900" (click)="$event.stopPropagation()">
+          <div class="flex items-start justify-between gap-3 bg-gradient-to-r from-amber-600 to-orange-600 px-4 py-3 text-white">
+            <div>
+              <p class="text-[10px] font-bold uppercase tracking-wide text-amber-100">{{ prefs.txt('ব্যাটারি স্টক থেকে পরিশোধ', 'Pay from battery stock') }}</p>
+              <h3 class="text-base font-black">{{ prefs.txt('ফান্ড ট্রান্সফার', 'Fund transfer') }}</h3>
+            </div>
+            <button type="button" (click)="closeFundTransfer()" class="cursor-pointer rounded-lg p-1 text-amber-100 hover:bg-white/15 hover:text-white">
+              <mat-icon class="text-base">close</mat-icon>
+            </button>
+          </div>
+
+          <div class="max-h-[70dvh] space-y-3 overflow-y-auto p-4">
+            @if (fundParties().length) {
+              <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                {{ prefs.txt('পার্টি', 'Party') }} *
+                <select [ngModel]="fundPartyId" (ngModelChange)="fundPartyId = $event; onFundPartyChange()"
+                  class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800">
+                  @for (row of fundParties(); track row.party.id) {
+                    <option [ngValue]="row.party.id">{{ row.party.name }} — {{ row.available | number:'1.2-2' }} TK</option>
+                  }
+                </select>
+                <span class="mt-1 block text-[10px] text-slate-400">{{ prefs.txt('এই পার্টির ব্যাটারি বাকি', 'Battery due for this party') }}: <strong class="text-amber-600 dark:text-amber-400">{{ fundPartyAvailable() | number:'1.2-2' }} TK</strong></span>
+              </label>
+
+              <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                {{ prefs.txt('টাকার পরিমাণ', 'Amount') }} *
+                <div class="mt-1 flex gap-1">
+                  <input type="number" min="0" [attr.max]="fundPartyAvailable()" step="0.01" [ngModel]="fundAmount" (ngModelChange)="fundAmount = +$event"
+                    class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
+                  <button type="button" (click)="fillFundAmount()" class="shrink-0 rounded-lg bg-slate-100 px-2 text-[11px] font-bold text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 cursor-pointer">{{ prefs.txt('সব', 'All') }}</button>
+                </div>
+              </label>
+
+              <div class="grid grid-cols-2 gap-2">
+                <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  {{ prefs.txt('তারিখ', 'Date') }}
+                  <input type="date" appDmyDate [(ngModel)]="fundDate" class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
+                </label>
+                <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  {{ prefs.txt('কোথা থেকে', 'Paid from') }}
+                  <select [ngModel]="fundMode" (ngModelChange)="fundMode = $event" class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800">
+                    @for (mode of ledgerModes; track mode) { <option [ngValue]="mode">{{ mode }}</option> }
+                  </select>
+                </label>
+              </div>
+
+              <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                {{ prefs.txt('নোট (ঐচ্ছিক)', 'Note (optional)') }}
+                <textarea [(ngModel)]="fundNote" rows="2" class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800"></textarea>
+              </label>
+
+              <p class="rounded-lg bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                {{ prefs.txt('ট্রান্সফার করলে নির্বাচিত ওয়ালেট অ্যাকাউন্ট থেকে টাকা কমবে, পার্টির ক্রয় বাকি কমবে এবং বাকি থাকলে অগ্রিম হবে। পুরোনো ভাউচার আগে মেটানো হবে।', 'The chosen wallet account goes down, the party purchase due is settled and any excess becomes advance. Oldest vouchers are cleared first.') }}
+              </p>
+            } @else {
+              <div class="rounded-lg bg-slate-50 p-4 text-center text-xs text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                {{ prefs.txt('ফান্ডে টাকা আছে, কিন্তু কোন পার্টির সাথে ব্যাটারি বাকি মেলেনি। ক্রয় ভাউচারে পার্টি বাছাই করা আছে কি না দেখুন।', 'The fund has money, but no party with an unpaid battery purchase was found. Check that the purchase vouchers have a party selected.') }}
+              </div>
+            }
+
+            @if (fundError()) {
+              <p class="rounded-lg bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{{ fundError() }}</p>
+            }
+          </div>
+
+          <div class="flex justify-end gap-2 border-t border-slate-200 px-4 py-3 dark:border-slate-700">
+            <button type="button" (click)="closeFundTransfer()" class="cursor-pointer rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">{{ prefs.txt('বাতিল', 'Cancel') }}</button>
+            <button type="button" (click)="saveFundTransfer()" [disabled]="fundSaving() || !fundParties().length"
+              class="cursor-pointer rounded-lg bg-amber-600 px-3 py-2 text-sm font-bold text-white hover:bg-amber-700 disabled:opacity-60">
+              {{ prefs.txt('ট্রান্সফার করুন', 'Transfer') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    }
+
+    @if (fundDeleteRequest(); as req) {
+      <app-passcode-modal
+        [title]="prefs.txt('ফান্ড ট্রান্সফার ফেরত', 'Reverse fund transfer')"
+        [message]="prefs.txt(
+          req.transferNo + ' ফেরত নিতে Admin PIN দিন। পার্টির পরিশোধ ও ওয়ালেটের টাকা দুটোই আগের অবস্থায় ফিরবে।',
+          'Enter the Admin PIN to reverse ' + req.transferNo + '. The party settlement and wallet movement will both be undone.')"
+        (verified)="onFundDeletePin()"
+        (close)="fundDeleteRequest.set(null)" />
     }
 
     @if (ledgerAccess(); as req) {
@@ -1143,6 +1343,32 @@ export class BatteryVouchers {
   editingVoucher = signal<BatteryVoucher | null>(null);
   voucherQuery = signal('');
 
+  // Battery stock fund: unpaid purchases can be sent to the seller's ledger.
+  showFundTransfer = signal(false);
+  fundPartyId: number | null = null;
+  fundAmount: number | null = null;
+  fundDate = localDateIso();
+  fundMode: LedgerPayment['mode'] = 'Cash';
+  fundNote = '';
+  fundError = signal('');
+  fundSaving = signal(false);
+  fundDeleteRequest = signal<BatteryFundTransfer | null>(null);
+  readonly ledgerModes = LEDGER_MODES;
+  readonly fundBalance = computed(() => this.dataService.batteryFundAvailable());
+  readonly fundAllocations = computed(() => this.dataService.batteryFundAllocationsByVoucher());
+  readonly fundByParty = computed(() => this.dataService.batteryFundByParty());
+  readonly fundTransfers = computed(() => [...this.dataService.batteryFundTransfers()]
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id));
+  readonly fundTransferredTotal = computed(() =>
+    Math.round(this.fundTransfers().reduce((sum, t) => sum + (Number(t.amount) || 0), 0) * 100) / 100);
+  readonly fundParties = computed(() => {
+    const available = this.fundByParty();
+    return this.dataService.parties()
+      .map(party => ({ party, available: available.get(party.id) || 0 }))
+      .filter(row => row.available > 0)
+      .sort((a, b) => a.party.name.localeCompare(b.party.name));
+  });
+
   // Custom customer modal
   showCustomerModal = signal(false);
   newCustomerName = '';
@@ -1161,6 +1387,19 @@ export class BatteryVouchers {
   givenKg = signal(0);
   fee = signal(0);
   cost = signal(0);
+  /** Once the operator types a lot cost, the field stops tracking the stock average. */
+  readonly costManual = signal(false);
+  /** Sold lines valued at the lots those kilograms came from. */
+  readonly autoCost = computed(() => this.type() === 'sale' ? this.dataService.batteryLinesCost(this.lines()) : 0);
+  /** True when some sold kilograms have no purchase lot behind them. */
+  readonly autoIncomplete = computed(() => this.type() === 'sale' && this.dataService.batteryLinesCostIncomplete(this.lines()));
+  /** What the field and the profit row use: a typed cost, else the lot cost (0 while incomplete). */
+  readonly displayCost = computed(() => {
+    if (this.type() !== 'sale') return 0;
+    const typed = Number(this.cost()) || 0;
+    if (this.costManual() && typed > 0) return typed;
+    return this.autoIncomplete() ? 0 : this.autoCost();
+  });
   cash = signal(0);
   bank = signal(0);
   mobile = signal(0);
@@ -1506,7 +1745,8 @@ export class BatteryVouchers {
       total: sum(v => v.total),
       paid: sum(v => v.paid),
       due: sum(v => v.due),
-      profit: sum(v => this.dataService.batteryVoucherProfit(v))
+      profit: sum(v => this.dataService.batteryVoucherProfit(v)),
+      incomplete: rows.filter(v => v.type === 'sale' && this.costIncomplete(v)).length
     };
   });
 
@@ -1537,7 +1777,7 @@ export class BatteryVouchers {
   readonly total = computed(() => this.type() === 'exchange' ? (Number(this.fee()) || 0) : this.lineTotal());
   readonly paid = computed(() => (Number(this.cash()) || 0) + (Number(this.bank()) || 0) + (Number(this.mobile()) || 0));
   readonly due = computed(() => Math.max(0, Math.round((this.total() - this.paid()) * 100) / 100));
-  readonly profit = computed(() => this.type() === 'sale' ? this.total() - (Number(this.cost()) || 0) : this.type() === 'exchange' ? this.total() : 0);
+  readonly profit = computed(() => this.type() === 'sale' ? this.total() - this.displayCost() : this.type() === 'exchange' ? this.total() : 0);
 
   readonly summaryCards = computed(() => {
     const s = this.summary();
@@ -1558,6 +1798,7 @@ export class BatteryVouchers {
     const exchange = this.type() === 'exchange';
     const qtyUnit = exchange ? 'kg' : this.qtyUnitFor(this.lines());
     const qty = exchange ? this.receivedKg() - this.givenKg() : this.totalKg();
+    const incomplete = this.type() === 'sale' && !this.costManual() && this.autoIncomplete();
     const rows = [
       { label: this.type() === 'purchase' ? this.prefs.txt('ক্রয় মূল্য', 'Purchase value') : this.type() === 'sale' ? this.prefs.txt('বিক্রয় মূল্য', 'Sale value') : this.prefs.txt('বদলি ফি', 'Exchange fee'), value: this.total().toFixed(2) },
       { label: this.prefs.txt('মোট পরিমাণ', 'Total qty'), value: `${formatQty(qty, qtyUnit)} ${this.unitLabel(qtyUnit)}` },
@@ -1567,8 +1808,8 @@ export class BatteryVouchers {
       { label: this.type() === 'purchase' ? this.prefs.txt('মোট প্রদান', 'Total paid') : this.prefs.txt('মোট প্রাপ্তি', 'Total received'), value: this.paid().toFixed(2) }
     ];
     if (this.type() === 'sale') {
-      rows.push({ label: this.prefs.txt('লটের খরচ', 'Lot cost'), value: (Number(this.cost()) || 0).toFixed(2) });
-      rows.push({ label: this.prefs.txt('লাভ', 'Profit'), value: this.profit().toFixed(2) });
+      rows.push({ label: this.prefs.txt('লটের খরচ', 'Lot cost'), value: incomplete ? this.prefs.txt('ক্রয়খরচ অসম্পূর্ণ', 'Cost incomplete') : this.displayCost().toFixed(2) });
+      rows.push({ label: this.prefs.txt('লাভ', 'Profit'), value: incomplete ? this.prefs.txt('অসম্পূর্ণ', 'Incomplete') : this.profit().toFixed(2) });
     }
     if (this.type() === 'exchange') rows.push({ label: this.prefs.txt('বদলি আয়', 'Exchange income'), value: this.profit().toFixed(2) });
     return rows;
@@ -1646,6 +1887,7 @@ export class BatteryVouchers {
     this.givenKg.set(Number(voucher.givenKg) || 0);
     this.fee.set(Number(voucher.fee) || 0);
     this.cost.set(Number(voucher.cost) || 0);
+    this.costManual.set((Number(voucher.cost) || 0) > 0);
     this.cash.set(Number(voucher.cash) || 0);
     this.bank.set(Number(voucher.bank) || 0);
     this.mobile.set(Number(voucher.mobile) || 0);
@@ -1662,8 +1904,36 @@ export class BatteryVouchers {
     return this.dataService.batteryVoucherProfit(v);
   }
 
+  /** A sale whose kilograms were never bought shows no profit figure at all. */
+  costIncomplete(v: BatteryVoucher): boolean {
+    return this.dataService.batteryVoucherCostIncomplete(v);
+  }
+
   addLine() {
     this.lines.update(list => [...list, this.makeLine()]);
+  }
+
+  /**
+   * Only a complete figure is stored: a partial auto cost (some kinds have lots,
+   * some do not) would be read back as complete and fake the missing profit.
+   */
+  private savableSaleCost(): number | undefined {
+    const typed = Number(this.cost()) || 0;
+    if (this.costManual() && typed > 0) return Math.round(typed * 100) / 100;
+    if (this.autoIncomplete()) return undefined;
+    return Math.round(this.autoCost() * 100) / 100;
+  }
+
+  /** A typed lot cost wins; emptying the box hands the figure back to the stock average. */
+  onCostInput(value: number | string) {
+    const amount = Number(value) || 0;
+    this.costManual.set(amount > 0);
+    this.cost.set(amount);
+  }
+
+  resetCostToAuto() {
+    this.costManual.set(false);
+    this.cost.set(0);
   }
 
   /** Apply a catalog kind to a line, snapping the unit (either → operator picks). */
@@ -1764,6 +2034,7 @@ export class BatteryVouchers {
     this.givenKg.set(0);
     this.fee.set(0);
     this.cost.set(0);
+    this.costManual.set(false);
     this.cash.set(0);
     this.bank.set(0);
     this.mobile.set(0);
@@ -1869,6 +2140,125 @@ export class BatteryVouchers {
   cancelEdit() {
     this.resetForm();
     this.router.navigateByUrl('/battery/ledger');
+  }
+
+  // ---- Battery stock fund ----
+  fundAllocated(voucher: BatteryVoucher): number {
+    return voucher.type === 'purchase' ? this.fundAllocations().get(voucher.id) || 0 : 0;
+  }
+
+  /** Paid on the voucher plus everything the fund has already sent to the seller. */
+  fundPaidTotal(voucher: BatteryVoucher): number {
+    return Math.round(((Number(voucher.paid) || 0) + this.fundAllocated(voucher)) * 100) / 100;
+  }
+
+  fundDueLeft(voucher: BatteryVoucher): number {
+    return Math.max(0, Math.round(((Number(voucher.due) || 0) - this.fundAllocated(voucher)) * 100) / 100);
+  }
+
+  fundAllocationLabel(transfer: BatteryFundTransfer): string {
+    return (transfer.allocations ?? []).map(line => line.voucherNo).join(', ');
+  }
+
+  openFundTransfer() {
+    const first = this.fundParties()[0];
+    this.fundPartyId = first?.party.id ?? null;
+    this.fundAmount = first ? first.available : null;
+    this.fundDate = localDateIso();
+    this.fundMode = 'Cash';
+    this.fundNote = '';
+    this.fundError.set('');
+    this.showFundTransfer.set(true);
+  }
+
+  closeFundTransfer() {
+    this.showFundTransfer.set(false);
+    this.fundSaving.set(false);
+  }
+
+  fundPartyAvailable(): number {
+    return this.fundPartyId != null ? this.fundByParty().get(this.fundPartyId) || 0 : 0;
+  }
+
+  onFundPartyChange() {
+    const available = this.fundPartyAvailable();
+    this.fundAmount = available > 0 ? available : null;
+    this.fundError.set('');
+  }
+
+  fillFundAmount() {
+    const available = this.fundPartyAvailable();
+    if (available > 0) this.fundAmount = available;
+  }
+
+  saveFundTransfer() {
+    if (this.fundSaving()) return;
+    const partyId = Number(this.fundPartyId) || 0;
+    const amount = Number(this.fundAmount) || 0;
+    if (!partyId) {
+      this.fundError.set(this.prefs.txt('পার্টি বাছুন।', 'Choose a party.'));
+      return;
+    }
+    if (!(amount > 0)) {
+      this.fundError.set(this.prefs.txt('টাকার পরিমাণ দিন।', 'Enter an amount.'));
+      return;
+    }
+    this.fundSaving.set(true);
+    const result = this.dataService.transferBatteryFund({
+      partyId,
+      amount,
+      mode: this.fundMode,
+      date: this.fundDate,
+      note: this.fundNote,
+      createdBy: this.session.currentUser()?.name
+    });
+    this.fundSaving.set(false);
+    if (!result.ok) {
+      this.fundError.set(result.error);
+      return;
+    }
+    this.session.log('Battery Voucher', `${result.transfer.transferNo} — fund → ${result.transfer.partyName} — ${amount.toFixed(2)} TK (${this.fundMode})`);
+    this.notify.success(
+      this.prefs.txt(
+        `${amount.toFixed(2)} TK ${result.transfer.partyName} এর হিসাবে পরিশোধ হয়েছে (${result.transfer.transferNo})।`,
+        `${amount.toFixed(2)} TK settled to ${result.transfer.partyName} (${result.transfer.transferNo}).`
+      ),
+      this.prefs.txt('ব্যাটারি ফান্ড ট্রান্সফার', 'Battery fund transfer')
+    );
+    this.closeFundTransfer();
+  }
+
+  requestFundDelete(transfer: BatteryFundTransfer) {
+    this.fundDeleteRequest.set(transfer);
+  }
+
+  onFundDeletePin() {
+    const transfer = this.fundDeleteRequest();
+    this.fundDeleteRequest.set(null);
+    if (!transfer) return;
+    void this.confirmFundDelete(transfer);
+  }
+
+  private async confirmFundDelete(transfer: BatteryFundTransfer) {
+    const ok = await this.notify.confirm(
+      this.prefs.txt(
+        `${transfer.transferNo} ফেরত নেবেন? পার্টির পরিশোধ ও ওয়ালেটের টাকা দুটোই আগের অবস্থায় ফিরবে।`,
+        `Reverse ${transfer.transferNo}? The party settlement and the wallet movement will both go back.`
+      ),
+      {
+        title: this.prefs.txt('ফান্ড ট্রান্সফার বাতিল', 'Reverse fund transfer'),
+        kind: 'warning',
+        confirmText: this.prefs.txt('ফেরত নিন', 'Reverse'),
+        cancelText: this.prefs.txt('বাতিল', 'Cancel')
+      }
+    );
+    if (!ok) return;
+    this.dataService.deleteBatteryFundTransfer(transfer.id);
+    this.session.log('Battery Voucher', `${transfer.transferNo} — fund transfer reversed — ${transfer.amount.toFixed(2)} TK`);
+    this.notify.success(
+      this.prefs.txt(`${transfer.transferNo} ফেরত নেওয়া হয়েছে।`, `${transfer.transferNo} reversed.`),
+      this.prefs.txt('ব্যাটারি ফান্ড', 'Battery fund')
+    );
   }
 
   sourceLabel(source: BatteryStockRow['source']): string {
@@ -2009,7 +2399,7 @@ export class BatteryVouchers {
       })),
       totalKg: type === 'exchange' ? 0 : Math.round(this.totalKg() * 100) / 100,
       total,
-      cost: type === 'sale' ? Math.round((Number(this.cost()) || 0) * 100) / 100 : undefined,
+      cost: type === 'sale' ? this.savableSaleCost() : undefined,
       receivedId: type === 'exchange' ? this.receivedId.trim() : undefined,
       receivedKg: type === 'exchange' ? roundQty(this.receivedKg(), 'kg') : undefined,
       receivedCondition: type === 'exchange' ? this.receivedCondition : undefined,

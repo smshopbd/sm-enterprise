@@ -172,7 +172,7 @@ const MODE_META: Record<LedgerPayment['mode'], { label: string; icon: string; ti
                   <td class="p-2.5"><div class="max-w-[220px] truncate" [title]="p.note">{{ p.note || '-' }}</div></td>
                   <td class="p-2.5 text-center">
                     <div class="flex items-center justify-center gap-1">
-                      @if (session.has('deleteRecords')) {
+                      @if (session.has('deleteRecords') && !p.batteryFundTransferId) {
                         <button (click)="openEdit(p)" class="rounded-md p-1 text-teal-700 transition hover:bg-teal-100 dark:text-teal-300 dark:hover:bg-teal-950/50 cursor-pointer" [title]="prefs.txt('ভাউচার সংশোধন করুন — নম্বর অপরিবর্তিত থাকবে', 'Edit voucher — number stays the same')">
                           <mat-icon class="text-sm">edit</mat-icon>
                         </button>
@@ -237,7 +237,7 @@ const MODE_META: Record<LedgerPayment['mode'], { label: string; icon: string; ti
               <span class="max-w-[50%] truncate" [title]="p.note">{{ p.note || prefs.txt('নোট নেই', 'No note') }}</span>
             </div>
 
-            @if (session.has('deleteRecords')) {
+            @if (session.has('deleteRecords') && !p.batteryFundTransferId) {
               <div class="grid grid-cols-2 gap-2">
                 <button (click)="openEdit(p)" class="inline-flex items-center justify-center gap-1 rounded-lg border border-teal-200 bg-teal-50 px-2 py-1.5 text-[11px] font-bold text-teal-700 transition hover:bg-teal-100 dark:border-teal-900 dark:bg-teal-950/50 dark:text-teal-300 dark:hover:bg-teal-900/50 cursor-pointer">
                   <mat-icon class="text-sm">edit</mat-icon> {{ prefs.txt('সংশোধন', 'Edit') }}
@@ -834,6 +834,13 @@ export class PaymentOut {
 
   /** Corrects a voucher without deleting it and losing the voucher number. */
   openEdit(payment: LedgerPayment) {
+    if (payment.batteryFundTransferId) {
+      this.notify.error(
+        this.prefs.txt('এটি ব্যাটারি স্টক ফান্ড থেকে দেওয়া — ব্যাটারি লেজার থেকে ফান্ড ট্রান্সফারটি ফিরিয়ে নিন।', 'This came from the battery stock fund — reverse the fund transfer from the battery ledger.'),
+        this.prefs.txt('সংশোধন করা যাবে না', 'Cannot edit')
+      );
+      return;
+    }
     this.editingId.set(payment.id);
     this.formPartyId = payment.partyId;
     this.formAmount = payment.amount;
@@ -898,6 +905,14 @@ export class PaymentOut {
   }
 
   async deleteRecord(id: number) {
+    const row = this.dataService.payments().find(p => p.id === id);
+    if (row?.batteryFundTransferId) {
+      this.notify.error(
+        this.prefs.txt('এটি ব্যাটারি স্টক ফান্ড থেকে দেওয়া — ব্যাটারি লেজার থেকে ফান্ড ট্রান্সফারটি ফিরিয়ে নিন।', 'This came from the battery stock fund — reverse the fund transfer from the battery ledger.'),
+        this.prefs.txt('মুছে ফেলা যাবে না', 'Cannot delete')
+      );
+      return;
+    }
     const confirmed = await this.notify.confirm(
       this.prefs.txt('ভাউচার মুছে ফেললে সরবরাহকারীর পরিশোধ ও বাকি হিসাব ফিরে যাবে।', 'Deleting the voucher will reverse the supplier payment and due balance.'),
       {

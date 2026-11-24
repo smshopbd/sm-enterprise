@@ -228,8 +228,12 @@ import {
                               <tr class="bv-sum"><td>{{ v.type === 'purchase' ? prefs.txt('মোট প্রদান', 'Total paid') : prefs.txt('মোট প্রাপ্তি', 'Total received') }}</td><td class="bv-num">{{ v.paid.toFixed(2) }}</td></tr>
                               <tr class="bv-final"><td>{{ v.due > 0 ? prefs.txt('বাকি', 'Balance due') : prefs.txt('পরিশোধিত', 'Settled') }}</td><td class="bv-num">{{ v.due.toFixed(2) }}</td></tr>
                               @if (v.type === 'sale') {
-                                <tr><td>{{ prefs.txt('লটের খরচ', 'Lot cost') }}</td><td class="bv-num">{{ (v.cost || 0).toFixed(2) }}</td></tr>
-                                <tr class="bv-profit"><td>{{ prefs.txt('লাভ', 'Profit') }}</td><td class="bv-num">{{ profit().toFixed(2) }}</td></tr>
+                                @if (costIncomplete(v)) {
+                                  <tr><td>{{ prefs.txt('লটের খরচ', 'Lot cost') }}</td><td class="bv-num">{{ prefs.txt('ক্রয়খরচ অসম্পূর্ণ', 'Cost incomplete') }}</td></tr>
+                                } @else {
+                                  <tr><td>{{ prefs.txt('লটের খরচ', 'Lot cost') }}</td><td class="bv-num">{{ costOf(v).toFixed(2) }}</td></tr>
+                                  <tr class="bv-profit"><td>{{ prefs.txt('লাভ', 'Profit') }}</td><td class="bv-num">{{ profit().toFixed(2) }}</td></tr>
+                                }
                               }
                               @if (v.type === 'exchange') {
                                 <tr class="bv-profit"><td>{{ prefs.txt('বদলি আয়', 'Exchange income') }}</td><td class="bv-num">{{ profit().toFixed(2) }}</td></tr>
@@ -308,6 +312,14 @@ export class BatteryVoucherComponent implements AfterViewChecked, OnDestroy {
     const v = this.voucher();
     return v ? this.dataService.batteryVoucherProfit(v) : 0;
   });
+
+  costOf(v: BatteryVoucher): number {
+    return this.dataService.batteryVoucherCost(v);
+  }
+
+  costIncomplete(v: BatteryVoucher): boolean {
+    return this.dataService.batteryVoucherCostIncomplete(v);
+  }
 
   /** Party mobile by linked id, else by name — vouchers store no phone of their own. */
   readonly partyPhone = computed(() => {

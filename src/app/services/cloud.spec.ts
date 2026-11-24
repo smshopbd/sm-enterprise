@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BACKEND_VERSION_KEY, CLOUD_CONFIG_KEY, CloudService } from './cloud';
 import { DataService } from './data';
+import { NotificationService } from './notification';
 import { StorageService } from './storage';
 
 interface Row { collection: string; row_id: string; data: Record<string, unknown>; updated_at?: string }
@@ -229,6 +230,9 @@ function internal(service: CloudService) {
     editTimes: Map<string, Map<string, string>>;
     refreshPending(): void;
     applyRealtime(row: Row): Promise<void>;
+    outbox: Set<string>;
+    retryOutbox(): Promise<void>;
+    stampLocalEdits(key: string): void;
   };
 }
 function row(id: string, data: Record<string, unknown>, collection = PRODUCTS): Row {
@@ -307,6 +311,53 @@ describe('CloudService reconciliation', () => {
     expect(table.get(`${PRODUCTS}:p1`)!.data['name']).toBe('Local');
     expect(products()).toEqual([{ id: 'p1', name: 'Local' }]);
     expect(service.syncConflicts()).toHaveLength(0);
+  });
+
+  it('uploads a saved collection even when the page no longer shows it', async () => {
+    const { service, table } = setup([{ id: 'p1', name: 'Saved sale' }], []);
+    internal(service).outbox.add(PRODUCTS);
+    await internal(service).retryOutbox();
+    expect(table.get(`${PRODUCTS}:p1`)!.data['name']).toBe('Saved sale');
+    expect(internal(service).outbox.size).toBe(0);
+  });
+
+  it('uploads a local row that never reached the outbox', async () => {
+    const { service, table } = setup([{ id: 'p1', name: 'Saved by an older build' }], []);
+    await internal(service).retryOutbox();
+    expect(table.get(`${PRODUCTS}:p1`)!.data['name']).toBe('Saved by an older build');
+    expect(internal(service).outbox.size).toBe(0);
+  });
+
+  it('keeps a failed upload queued without a popup and clears it after a later retry', async () => {
+    const { service, table, beforeWrite } = setup([{ id: 'p1', name: 'Saved sale' }], []);
+    const helper = internal(service);
+    helper.outbox.add(PRODUCTS);
+    let offline = true;
+    beforeWrite(() => { if (offline) { offline = false; throw new Error('offline'); } });
+    await helper.retryOutbox();
+    expect(helper.outbox.has(PRODUCTS)).toBe(true);
+    expect(service.status()).toBe('error');
+    expect(service.statusMessage()).toContain('offline');
+    expect(TestBed.inject(NotificationService).toasts()).toHaveLength(0);
+    await helper.retryOutbox();
+    expect(table.get(`${PRODUCTS}:p1`)!.data['name']).toBe('Saved sale');
+    expect(helper.outbox.size).toBe(0);
+    expect(service.status()).toBe('online');
+    expect(TestBed.inject(NotificationService).toasts()).toHaveLength(0);
+  });
+
+  it('does not let a leftover copy revive a row the server deleted', async () => {
+    const deletedAt = '2026-11-07T00:00:00.000Z';
+    const { service, products, table } = setup([{ id: 'p1', name: 'Stale copy' }], [row('p1', { __deleted: deletedAt })]);
+    const helper = internal(service);
+    helper.pushed.set(PRODUCTS, new Map([['p1', `deleted:${deletedAt}`]]));
+    helper.synced.set(PRODUCTS, new Set(['p1']));
+    // Any local array rewrite used to stamp this leftover as a fresh edit.
+    helper.stampLocalEdits(PRODUCTS);
+    expect(helper.editTimes.get(PRODUCTS)?.has('p1') ?? false).toBe(false);
+    await service.pushCollection(PRODUCTS);
+    expect(table.get(`${PRODUCTS}:p1`)!.data['__deleted']).toBe(deletedAt);
+    expect(products()).toEqual([]);
   });
 
   it('adds a row from realtime using the current server value', async () => {

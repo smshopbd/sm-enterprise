@@ -139,10 +139,10 @@ import { CloudService } from '../../services/cloud';
           </span>
         } @else if (!loading.online()) {
           <span class="inline-flex items-center gap-1 px-1.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-[10px] font-bold text-amber-700 dark:text-amber-300"
-            [title]="prefs.txt('ক্লাউডে সংযোগ হচ্ছে না — লোকাল ডেটা নিরাপদ', 'Cloud offline — local data is safe')"
-            [attr.aria-label]="prefs.txt('ক্লাউড অফলাইন', 'Cloud offline')">
+            [title]="syncProblem() || prefs.txt('ক্লাউডে সংযোগ হচ্ছে না — লোকাল ডেটা নিরাপদ', 'Cloud offline — local data is safe')"
+            [attr.aria-label]="syncProblem() || prefs.txt('ক্লাউড অফলাইন', 'Cloud offline')">
             <mat-icon class="text-xs">cloud_off</mat-icon>
-            <span class="hidden sm:inline">{{ prefs.txt('অফলাইন', 'Offline') }}</span>
+            <span class="hidden sm:inline">{{ prefs.txt('সিঙ্ক সমস্যা', 'Sync issue') }}</span>
           </span>
         }
 
@@ -300,6 +300,9 @@ export class Header implements OnInit, OnDestroy {
   loading = inject(LoadingService);
   private cloud = inject(CloudService);
   private router = inject(Router);
+
+  /** The reason behind the sync chip, so a stuck upload can be inspected without a popup. */
+  readonly syncProblem = computed(() => this.cloud.status() === 'error' ? this.cloud.statusMessage() : '');
 
   /** Server timestamp of the newest row, so the header shows how fresh the shop is. */
   readonly lastUpdateText = computed(() => {

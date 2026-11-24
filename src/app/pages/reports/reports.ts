@@ -9,6 +9,7 @@ import {
   categoryProfitRows, productProfitRows, returnedItemsOf, soldItemsOf, ProductProfitRow, SoldItem
 } from '../../utils/report-analytics';
 import { productStockValuation } from '../../utils/stock-valuation';
+import { saleVoucherProfits, voucherProfitTotals, VoucherProfit } from '../../utils/voucher-profit';
 import { SessionService } from '../../services/session';
 import { PreferencesService } from '../../services/preferences';
 import { NotificationService } from '../../services/notification';
@@ -19,8 +20,9 @@ import {
   DATE_RANGE_PRESETS, DateRangeKind, resolveDateRange, toIsoDate
 } from '../../utils/date-range';
 
-type ReportTab = 'money' | 'overview' | 'products' | 'categories' | 'stock';
+type ReportTab = 'money' | 'overview' | 'products' | 'categories' | 'stock' | 'vouchers';
 type FlowGranularity = 'daily' | 'weekly' | 'monthly' | 'yearly';
+type VoucherStatus = 'all' | 'profit' | 'loss' | 'incomplete';
 
 interface FlowRow {
   key: string;
@@ -93,6 +95,9 @@ interface FlowRow {
           <button (click)="setTab('products')" [class]="tab() === 'products' ? activeTabClass : idleTabClass">{{ prefs.t('reports.productProfit') }}</button>
           <button (click)="setTab('categories')" [class]="tab() === 'categories' ? activeTabClass : idleTabClass">{{ prefs.t('reports.categoryProfit') }}</button>
           <button (click)="setTab('stock')" [class]="tab() === 'stock' ? activeTabClass : idleTabClass">{{ prefs.t('reports.stockValue') }}</button>
+          <button (click)="setTab('vouchers')" [class]="tab() === 'vouchers' ? activeTabClass : idleTabClass">
+            <mat-icon class="text-sm align-middle mr-1">receipt_long</mat-icon>{{ prefs.txt('ভাউচার লাভ-ক্ষতি', 'Voucher Profit') }}
+          </button>
         </div>
 
         <div id="printable-area" class="space-y-4">
@@ -251,6 +256,13 @@ interface FlowRow {
               }
             </div>
 
+            @if (totals().batteryIncomplete) {
+              <p class="flex items-center gap-1.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                <mat-icon class="text-sm">info</mat-icon>
+                {{ prefs.txt(totals().batteryIncomplete + 'টি ব্যাটারি বিক্রয়ের ক্রয়খরচ পাওয়া যায়নি — ওগুলোর লাভ এই রিপোর্টে ধরা হয়নি (ভাউচারে ‘ক্রয়খরচ অসম্পূর্ণ’)।', totals().batteryIncomplete + ' battery sale(s) have no purchase cost — their profit is left out of this report (shown as “cost incomplete” on the voucher).') }}
+              </p>
+            }
+
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div class="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
                 <div class="bg-slate-50 px-4 py-2.5 border-b border-slate-200 font-bold">{{ prefs.t('reports.profitLoss') }}</div>
@@ -378,6 +390,143 @@ interface FlowRow {
             </div>
           }
 
+          <!-- Per-voucher profit / loss -->
+          @if (tab() === 'vouchers') {
+            <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+              <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-2xs">
+                <div class="flex items-center justify-between gap-1">
+                  <p class="text-[10px] font-bold uppercase tracking-wide text-slate-500">{{ prefs.txt('মোট ভাউচার', 'Vouchers') }}</p>
+                  <mat-icon class="text-sm text-slate-400">receipt_long</mat-icon>
+                </div>
+                <p class="text-lg font-black font-mono text-slate-900 dark:text-slate-100 mt-1">{{ voucherTotals().count }}</p>
+                <p class="text-[9.5px] text-slate-400">{{ voucherTotals().complete }} {{ prefs.txt('সম্পূর্ণ', 'complete') }} · {{ voucherTotals().incomplete }} {{ prefs.txt('অসম্পূর্ণ', 'incomplete') }}</p>
+              </div>
+              <div class="bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-500/30 rounded-xl p-3.5 shadow-2xs">
+                <div class="flex items-center justify-between gap-1">
+                  <p class="text-[10px] font-bold uppercase tracking-wide text-teal-700 dark:text-teal-300">{{ prefs.txt('নিট বিক্রয়', 'Net Revenue') }}</p>
+                  <mat-icon class="text-sm text-teal-500">payments</mat-icon>
+                </div>
+                <p class="text-lg font-black font-mono text-teal-700 dark:text-teal-300 mt-1">{{ voucherTotals().revenue | number:'1.2-2' }}</p>
+                <p class="text-[9.5px] text-slate-400">{{ prefs.txt('ফেরত বাদে', 'After credit notes') }}</p>
+              </div>
+              <div class="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-500/30 rounded-xl p-3.5 shadow-2xs">
+                <div class="flex items-center justify-between gap-1">
+                  <p class="text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">{{ prefs.txt('ক্রয়মূল্য', 'Cost') }}</p>
+                  <mat-icon class="text-sm text-amber-500">inventory_2</mat-icon>
+                </div>
+                <p class="text-lg font-black font-mono text-amber-700 dark:text-amber-300 mt-1">{{ voucherTotals().cost | number:'1.2-2' }}</p>
+                <p class="text-[9.5px] text-slate-400">{{ prefs.txt('সম্পূর্ণ ভাউচারের', 'Of complete vouchers') }}</p>
+              </div>
+              <div class="rounded-xl p-3.5 shadow-2xs border" [class]="voucherTotals().profit >= 0 ? 'bg-emerald-50/70 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30' : 'bg-rose-50/70 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30'">
+                <div class="flex items-center justify-between gap-1">
+                  <p class="text-[10px] font-bold uppercase tracking-wide" [class]="voucherTotals().profit >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'">{{ prefs.txt('লাভ / ক্ষতি', 'Profit / Loss') }}</p>
+                  <mat-icon class="text-sm" [class]="voucherTotals().profit >= 0 ? 'text-emerald-500' : 'text-rose-500'">trending_up</mat-icon>
+                </div>
+                <p class="text-lg font-black font-mono mt-1" [class]="voucherTotals().profit >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'">{{ voucherTotals().profit | number:'1.2-2' }}</p>
+                <p class="text-[9.5px] text-slate-500 dark:text-slate-400">{{ prefs.txt('বিক্রয় − ক্রয়মূল্য', 'Revenue − cost') }}</p>
+              </div>
+              <div class="bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-500/30 rounded-xl p-3.5 shadow-2xs">
+                <div class="flex items-center justify-between gap-1">
+                  <p class="text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">{{ prefs.txt('লাভের ভাউচার', 'Profitable') }}</p>
+                  <mat-icon class="text-sm text-emerald-500">thumb_up</mat-icon>
+                </div>
+                <p class="text-lg font-black font-mono text-emerald-700 dark:text-emerald-300 mt-1">{{ voucherTotals().complete - voucherTotals().loss }}</p>
+                <p class="text-[9.5px] text-slate-400">{{ prefs.txt('সম্পূর্ণ ভাউচার', 'Complete vouchers') }}</p>
+              </div>
+              <div class="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-500/30 rounded-xl p-3.5 shadow-2xs">
+                <div class="flex items-center justify-between gap-1">
+                  <p class="text-[10px] font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">{{ prefs.txt('লোকসানের ভাউচার', 'Loss-making') }}</p>
+                  <mat-icon class="text-sm text-rose-500">thumb_down</mat-icon>
+                </div>
+                <p class="text-lg font-black font-mono text-rose-600 dark:text-rose-300 mt-1">{{ voucherTotals().loss }}</p>
+                <p class="text-[9.5px] text-slate-400">{{ prefs.txt('লাভ শূন্যের নিচে', 'Profit below zero') }}</p>
+              </div>
+            </div>
+
+            <div class="no-print bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs p-2.5 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+              <div class="relative min-w-[220px] flex-1">
+                <mat-icon class="absolute left-2 top-1/2 -translate-y-1/2 text-sm text-slate-400">search</mat-icon>
+                <input type="text" [ngModel]="voucherQuery()" (ngModelChange)="setVoucherQuery($event)"
+                  [placeholder]="prefs.txt('ইনভয়েস বা কাস্টমার খুঁজুন', 'Search invoice or customer')"
+                  class="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-2 text-[11px] text-slate-800 outline-none focus:border-teal-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
+              </div>
+              <div class="flex items-center gap-1.5 overflow-x-auto">
+                @for (option of voucherStatusOptions; track option.key) {
+                  <button (click)="setVoucherStatus(option.key)"
+                    [class]="voucherStatus() === option.key ? activeTabClass : idleTabClass">
+                    {{ prefs.txt(option.bn, option.en) }}
+                  </button>
+                }
+                <span class="ml-1 shrink-0 text-[10px] font-bold text-slate-400">{{ filteredVoucherProfits().length }} / {{ voucherProfits().length }}</span>
+              </div>
+            </div>
+
+            <div class="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+              <div class="overflow-x-auto">
+                <table class="w-full min-w-[940px] text-left border-collapse">
+                  <thead>
+                    <tr class="bg-teal-700 text-white uppercase text-[10px] font-bold">
+                      <th class="p-2.5 text-center w-10">SL</th>
+                      <th class="p-2.5">{{ prefs.txt('ইনভয়েস', 'Invoice') }}</th>
+                      <th class="p-2.5">{{ prefs.t('common.date') }}</th>
+                      <th class="p-2.5">{{ prefs.txt('কাস্টমার', 'Customer') }}</th>
+                      <th class="p-2.5 text-right">{{ prefs.txt('আইটেম / পরিমাণ', 'Items / Qty') }}</th>
+                      <th class="p-2.5 text-right">{{ prefs.txt('নিট বিক্রয়', 'Net Revenue') }}</th>
+                      <th class="p-2.5 text-right">{{ prefs.t('reports.cost') }}</th>
+                      <th class="p-2.5 text-right">{{ prefs.txt('লাভ / ক্ষতি', 'Profit / Loss') }}</th>
+                      <th class="p-2.5 text-right">{{ prefs.t('reports.margin') }}</th>
+                      <th class="p-2.5 text-center">{{ prefs.txt('অবস্থা', 'Status') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                    @for (row of vouchersPager.paged(); track row.id; let idx = $index) {
+                      <tr (click)="openVoucher(row)" class="cursor-pointer hover:bg-teal-50/40 dark:hover:bg-slate-800/60">
+                        <td class="p-2.5 text-center text-slate-400">{{ vouchersPager.offset() + idx + 1 }}</td>
+                        <td class="p-2.5 whitespace-nowrap font-bold text-slate-800 dark:text-slate-100">{{ row.invoice }}</td>
+                        <td class="p-2.5 whitespace-nowrap text-slate-500">{{ row.date }}</td>
+                        <td class="p-2.5 text-slate-600 dark:text-slate-300">{{ row.customer }}</td>
+                        <td class="p-2.5 text-right font-mono text-slate-600 dark:text-slate-300">{{ row.lineCount }} / {{ row.qty | number:'1.0-2' }}</td>
+                        <td class="p-2.5 text-right font-mono">
+                          {{ row.netRevenue | number:'1.2-2' }}
+                          @if (row.returns > 0) {
+                            <div class="text-[9.5px] font-semibold text-rose-500">{{ prefs.txt('ফেরত', 'Return') }} −{{ row.returns | number:'1.2-2' }}</div>
+                          }
+                        </td>
+                        <td class="p-2.5 text-right font-mono">{{ row.cost | number:'1.2-2' }}</td>
+                        <td class="p-2.5 text-right font-mono font-bold" [class.text-emerald-700]="row.profit >= 0" [class.text-rose-600]="row.profit < 0" [class.dark:text-emerald-300]="row.profit >= 0" [class.dark:text-rose-300]="row.profit < 0">{{ row.profit | number:'1.2-2' }}</td>
+                        <td class="p-2.5 text-right font-mono text-slate-600 dark:text-slate-300">{{ row.margin | number:'1.1-1' }}%</td>
+                        <td class="p-2.5 text-center">
+                          @if (row.costIncomplete) {
+                            <span class="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[9.5px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">{{ prefs.txt('অসম্পূর্ণ', 'Incomplete') }}</span>
+                          } @else if (row.profit < 0) {
+                            <span class="inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[9.5px] font-bold text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">{{ prefs.txt('লোকসান', 'Loss') }}</span>
+                          } @else {
+                            <span class="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[9.5px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">{{ prefs.txt('লাভ', 'Profit') }}</span>
+                          }
+                        </td>
+                      </tr>
+                    } @empty {
+                      <tr><td colspan="10" class="p-8 text-center text-slate-400">{{ prefs.txt('এই সময়ে কোনো বিক্রয় ভাউচার নেই।', 'No sale vouchers in this period.') }}</td></tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+
+              <app-table-pagination
+                [total]="vouchersPager.total()"
+                [page]="vouchersPager.currentPage()"
+                [pageSize]="vouchersPager.pageSize()"
+                (pageChange)="vouchersPager.setPage($event)"
+                (pageSizeChange)="vouchersPager.setPageSize($event)"
+              />
+            </div>
+
+            <p class="text-[10px] text-slate-400">
+              {{ prefs.txt('প্রতি ভাউচারের বিক্রয় = বিলের সর্বমোট; ওই ইনভয়েসের পোস্টেড ক্রেডিট নোট (তারিখ যাই হোক) বিক্রয় থেকে বাদ যায়। ক্রয়মূল্য = পণ্য/ভ্যারিয়েন্টের ক্রয়মূল্য × বেস একক পরিমাণ; রিস্টক হওয়া ফেরতের খরচ ফেরত আসে, নষ্ট পণ্যের খরচ থেকে যায় (লোকসান)। শিপিং/ট্যাক্স/পুরাতন ব্যাটারির সমন্বয় লাভে ধরা আছে।', 'Voucher revenue = invoice total; posted credit notes for that invoice are deducted whenever they were made. Cost = product/variant purchase price × base quantity; a restocked return gives its cost back, a damaged one keeps it (loss). Shipping/tax/old-battery adjustments are already inside the profit.') }}
+              {{ prefs.txt('সারসংক্ষেপের মোট শুধু সম্পূর্ণ ভাউচারের; যেসব ভাউচারের কোনো লাইনে ক্রয়মূল্য নেই সেগুলো ‘অসম্পূর্ণ’ এবং মোটের বাইরে।', 'Summary totals count complete vouchers only; vouchers with a line that has no purchase cost are marked “incomplete” and left out.') }}
+            </p>
+          }
+
           <!-- Stock valuation -->
           @if (tab() === 'stock') {
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -435,6 +584,112 @@ interface FlowRow {
             </div>
           }
         </div>
+
+        @if (selectedVoucher(); as v) {
+          <div class="no-print fixed inset-0 z-[60] flex justify-end bg-slate-900/60 backdrop-blur-2xs" (click)="closeVoucher()">
+            <aside role="dialog" aria-modal="true" (click)="$event.stopPropagation()"
+              class="flex h-full w-full max-w-xl flex-col overflow-hidden border-l border-slate-200 bg-white text-slate-800 shadow-2xl animate-in slide-in-from-right duration-200 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100">
+              <header class="flex shrink-0 items-start justify-between gap-3 bg-teal-700 px-4 py-3 text-white dark:bg-slate-950">
+                <div class="min-w-0">
+                  <p class="text-[10px] font-bold uppercase tracking-[0.16em] text-teal-100/80">{{ prefs.txt('ভাউচারের লাভ-ক্ষতি', 'Voucher profit') }}</p>
+                  <h3 class="truncate text-base font-black">#{{ v.invoice }}</h3>
+                  <p class="truncate text-[11px] text-teal-50/90">{{ v.date }} • {{ v.customer }}</p>
+                </div>
+                <button (click)="closeVoucher()" [attr.aria-label]="prefs.txt('বন্ধ করুন', 'Close')"
+                  class="cursor-pointer rounded-lg p-1 text-white/85 hover:bg-white/10 hover:text-white">
+                  <mat-icon class="text-lg">close</mat-icon>
+                </button>
+              </header>
+
+              <div class="flex-1 space-y-3 overflow-y-auto p-4">
+                <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div class="rounded-lg border border-teal-200 bg-teal-50/60 p-2.5 dark:border-teal-500/30 dark:bg-teal-500/10">
+                    <p class="text-[9.5px] font-bold uppercase text-teal-700 dark:text-teal-300">{{ prefs.txt('নিট বিক্রয়', 'Net Revenue') }}</p>
+                    <p class="mt-0.5 font-mono text-sm font-black text-teal-700 dark:text-teal-300">{{ v.netRevenue | number:'1.2-2' }}</p>
+                  </div>
+                  <div class="rounded-lg border border-amber-200 bg-amber-50/60 p-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
+                    <p class="text-[9.5px] font-bold uppercase text-amber-700 dark:text-amber-300">{{ prefs.txt('ক্রয়মূল্য', 'Cost') }}</p>
+                    <p class="mt-0.5 font-mono text-sm font-black text-amber-700 dark:text-amber-300">{{ v.cost | number:'1.2-2' }}</p>
+                  </div>
+                  <div class="rounded-lg border p-2.5" [class]="v.profit >= 0 ? 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-500/30 dark:bg-emerald-500/10' : 'border-rose-200 bg-rose-50/60 dark:border-rose-500/30 dark:bg-rose-500/10'">
+                    <p class="text-[9.5px] font-bold uppercase" [class]="v.profit >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'">{{ prefs.txt('লাভ / ক্ষতি', 'Profit / Loss') }}</p>
+                    <p class="mt-0.5 font-mono text-sm font-black" [class]="v.profit >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'">{{ v.profit | number:'1.2-2' }}</p>
+                  </div>
+                  <div class="rounded-lg border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800">
+                    <p class="text-[9.5px] font-bold uppercase text-slate-500 dark:text-slate-300">{{ prefs.t('reports.margin') }}</p>
+                    <p class="mt-0.5 font-mono text-sm font-black text-slate-700 dark:text-slate-100">{{ v.margin | number:'1.1-1' }}%</p>
+                  </div>
+                </div>
+
+                @if (v.returns > 0) {
+                  <p class="rounded-lg bg-rose-50 px-3 py-2 text-[10px] text-rose-600 dark:bg-rose-500/10 dark:text-rose-300">
+                    {{ prefs.txt('বিলের সর্বমোট', 'Invoice total') }} {{ v.revenue | number:'1.2-2' }} − {{ prefs.txt('ফেরত', 'returns') }} {{ v.returns | number:'1.2-2' }} TK
+                  </p>
+                } @else if (v.adjustment !== 0) {
+                  <p class="rounded-lg bg-slate-50 px-3 py-2 text-[10px] text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                    {{ prefs.txt('শিপিং/ট্যাক্স/পুরাতন ব্যাটারির সমন্বয়', 'Shipping/tax/old-battery adjustment') }}: {{ v.adjustment | number:'1.2-2' }} TK
+                  </p>
+                }
+
+                @if (v.costIncomplete) {
+                  <p class="flex items-start gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-[10.5px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+                    <mat-icon class="text-sm">info</mat-icon>
+                    {{ prefs.txt('কোনো লাইনের ক্রয়মূল্য পাওয়া যায়নি, তাই এই ভাউচারটি সারসংক্ষেপের মোটে ধরা হয়নি।', 'A line has no purchase cost, so this voucher is left out of the summary totals.') }}
+                  </p>
+                }
+
+                <div class="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+                  <table class="w-full text-left border-collapse text-[11px]">
+                    <thead>
+                      <tr class="bg-slate-50 text-[9.5px] font-bold uppercase text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                        <th class="px-2.5 py-2">{{ prefs.txt('পণ্য', 'Item') }}</th>
+                        <th class="px-2.5 py-2 text-right">{{ prefs.txt('পরিমাণ', 'Qty') }}</th>
+                        <th class="px-2.5 py-2 text-right">{{ prefs.t('reports.revenue') }}</th>
+                        <th class="px-2.5 py-2 text-right">{{ prefs.t('reports.cost') }}</th>
+                        <th class="px-2.5 py-2 text-right">{{ prefs.t('reports.profit') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                      @for (line of v.lines; track $index) {
+                        <tr>
+                          <td class="px-2.5 py-1.5 font-semibold">{{ line.name }}</td>
+                          <td class="px-2.5 py-1.5 text-right font-mono">{{ line.quantity | number:'1.0-2' }} {{ line.unit }}</td>
+                          <td class="px-2.5 py-1.5 text-right font-mono">{{ line.revenue | number:'1.2-2' }}</td>
+                          <td class="px-2.5 py-1.5 text-right font-mono">
+                            {{ line.cost | number:'1.2-2' }}
+                            @if (!line.costKnown) {
+                              <span class="text-rose-500" [title]="prefs.txt('ক্রয়মূল্য পাওয়া যায়নি', 'Purchase cost not found')">*</span>
+                            }
+                          </td>
+                          <td class="px-2.5 py-1.5 text-right font-mono font-bold" [class.text-emerald-700]="line.profit >= 0" [class.text-rose-600]="line.profit < 0" [class.dark:text-emerald-300]="line.profit >= 0" [class.dark:text-rose-300]="line.profit < 0">{{ line.profit | number:'1.2-2' }}</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+
+                @if (v.returnLines.length) {
+                  <div class="overflow-hidden rounded-xl border border-rose-200 dark:border-rose-500/30">
+                    <p class="bg-rose-50 px-2.5 py-1.5 text-[10px] font-bold text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{{ prefs.txt('ফেরত (ক্রেডিট নোট)', 'Returns (credit notes)') }}</p>
+                    <table class="w-full text-left border-collapse text-[11px]">
+                      <tbody class="divide-y divide-rose-100 dark:divide-rose-500/20">
+                        @for (line of v.returnLines; track $index) {
+                          <tr>
+                            <td class="px-2.5 py-1.5 font-semibold">{{ line.name }}</td>
+                            <td class="px-2.5 py-1.5 text-right font-mono">{{ line.quantity | number:'1.0-2' }} {{ line.unit }}</td>
+                            <td class="px-2.5 py-1.5 text-right font-mono">{{ line.revenue | number:'1.2-2' }}</td>
+                            <td class="px-2.5 py-1.5 text-right font-mono">{{ line.cost | number:'1.2-2' }}</td>
+                            <td class="px-2.5 py-1.5 text-right font-mono font-bold" [class.text-emerald-700]="line.profit >= 0" [class.text-rose-600]="line.profit < 0">{{ line.profit | number:'1.2-2' }}</td>
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                  </div>
+                }
+              </div>
+            </aside>
+          </div>
+        }
       </div>
     }
   `
@@ -455,8 +710,17 @@ export class Reports {
   toDate = signal<string>(resolveDateRange('month').to);
   rangeKind = signal<DateRangeKind>('month');
   granularity = signal<FlowGranularity>('daily');
+  voucherQuery = signal<string>('');
+  voucherStatus = signal<VoucherStatus>('all');
+  selectedVoucher = signal<VoucherProfit | null>(null);
 
   readonly rangePresets = DATE_RANGE_PRESETS;
+  readonly voucherStatusOptions: { key: VoucherStatus; bn: string; en: string }[] = [
+    { key: 'all', bn: 'সব', en: 'All' },
+    { key: 'profit', bn: 'শুধু লাভ', en: 'Profit' },
+    { key: 'loss', bn: 'শুধু লোকসান', en: 'Loss' },
+    { key: 'incomplete', bn: 'ক্রয়খরচ অসম্পূর্ণ', en: 'Cost incomplete' }
+  ];
   readonly granularities: { key: FlowGranularity; bn: string; en: string }[] = [
     { key: 'daily', bn: 'দৈনিক', en: 'Daily' },
     { key: 'weekly', bn: 'সাপ্তাহিক', en: 'Weekly' },
@@ -470,7 +734,7 @@ export class Reports {
   constructor() {
     this.route.queryParamMap.subscribe(params => {
       const tab = params.get('tab') as ReportTab | null;
-      if (tab && ['money', 'overview', 'products', 'categories', 'stock'].includes(tab)) {
+      if (tab && ['money', 'overview', 'products', 'categories', 'stock', 'vouchers'].includes(tab)) {
         this.tab.set(tab);
       }
     });
@@ -597,6 +861,11 @@ export class Reports {
 
   batteryProfit = computed(() =>
     this.batteryInRange().reduce((acc, v) => acc + this.dataService.batteryVoucherProfit(v), 0)
+  );
+
+  /** Battery sales in range whose stock was never bought — profit is withheld, not guessed. */
+  batteryIncomplete = computed(() =>
+    this.batteryInRange().filter(v => v.type === 'sale' && this.dataService.batteryVoucherCostIncomplete(v)).length
   );
 
   purchasesInRange = computed(() => {
@@ -745,10 +1014,55 @@ export class Reports {
 
   readonly stockPager = createPager(() => this.stockRows());
 
+  /**
+   * Every sale in the period gets its own profit, newest first. Credit notes are
+   * matched to their invoice regardless of the note's date, so a later return
+   * still lowers the voucher it reverses.
+   */
+  voucherProfits = computed<VoucherProfit[]>(() =>
+    saleVoucherProfits(this.salesInRange(), this.dataService.salesReturns(), this.dataService.products())
+      .sort((a, b) => this.dateValue(b.date) - this.dateValue(a.date) || b.invoice.localeCompare(a.invoice))
+  );
+
+  voucherTotals = computed(() => voucherProfitTotals(this.voucherProfits()));
+
+  filteredVoucherProfits = computed<VoucherProfit[]>(() => {
+    const query = this.voucherQuery().trim().toLowerCase();
+    const status = this.voucherStatus();
+    return this.voucherProfits().filter(row => {
+      if (status === 'profit' && (row.costIncomplete || row.profit < 0)) return false;
+      if (status === 'loss' && (row.costIncomplete || row.profit >= 0)) return false;
+      if (status === 'incomplete' && !row.costIncomplete) return false;
+      if (!query) return true;
+      return row.invoice.toLowerCase().includes(query) || row.customer.toLowerCase().includes(query);
+    });
+  });
+
+  readonly vouchersPager = createPager(() => this.filteredVoucherProfits());
+
+  setVoucherQuery(value: string) {
+    this.voucherQuery.set(value || '');
+    this.vouchersPager.setPage(1);
+  }
+
+  setVoucherStatus(value: VoucherStatus) {
+    this.voucherStatus.set(value);
+    this.vouchersPager.setPage(1);
+  }
+
+  openVoucher(row: VoucherProfit) {
+    this.selectedVoucher.set(row);
+  }
+
+  closeVoucher() {
+    this.selectedVoucher.set(null);
+  }
+
   resetPages() {
     this.productsPager.setPage(1);
     this.categoriesPager.setPage(1);
     this.stockPager.setPage(1);
+    this.vouchersPager.setPage(1);
   }
 
   totals = computed(() => {
@@ -764,7 +1078,7 @@ export class Reports {
     const payments = this.paymentsInRange().reduce((acc, p) => acc + p.amount, 0);
     const qty = this.itemRows().reduce((acc, r) => acc + r.baseQty, 0);
     const batteryProfit = this.batteryProfit();
-    return { sales, cogs, expenses, gross: sales - cogs, net: sales - cogs - expenses + batteryProfit, batteryProfit, cashCollected, bankCollected, due, payments, qty };
+    return { sales, cogs, expenses, gross: sales - cogs, net: sales - cogs - expenses + batteryProfit, batteryProfit, batteryIncomplete: this.batteryIncomplete(), cashCollected, bankCollected, due, payments, qty };
   });
 
   summaryCards = computed(() => [
@@ -783,6 +1097,7 @@ export class Reports {
       case 'products': return this.prefs.t('reports.productProfit');
       case 'categories': return this.prefs.t('reports.categoryProfit');
       case 'stock': return this.prefs.t('reports.stockValue');
+      case 'vouchers': return this.prefs.txt('প্রতি সেল ভাউচারের লাভ-ক্ষতি', 'Profit / Loss by Sale Voucher');
       default: return this.prefs.t('reports.profitLoss');
     }
   });
@@ -801,11 +1116,14 @@ export class Reports {
       { Metric: 'Rent Paid', Value: this.rentInRange().reduce((acc, r) => acc + (Number(r.amount) || 0), 0) },
       { Metric: 'Net Profit', Value: this.totals().net },
       { Metric: 'Battery Profit', Value: this.totals().batteryProfit },
+      { Metric: 'Battery Sales Without Cost', Value: this.totals().batteryIncomplete },
       { Metric: 'Cash Collected', Value: this.totals().cashCollected },
       { Metric: 'Bank Collected', Value: this.totals().bankCollected },
       { Metric: 'Due', Value: this.totals().due },
       { Metric: 'Stock at Cost', Value: this.dataService.stockValueCost() },
-      { Metric: 'Stock at Sale Value', Value: this.dataService.stockValueSales() }
+      { Metric: 'Stock at Sale Value', Value: this.dataService.stockValueSales() },
+      { Metric: 'Vouchers Without Cost', Value: this.voucherTotals().incomplete },
+      { Metric: 'Loss-making Vouchers', Value: this.voucherTotals().loss }
     ];
     const productRows = this.productPerformance().map(r => ({
       Product: r.name, Category: r.category, Qty: r.qty,
@@ -819,6 +1137,13 @@ export class Reports {
       PurchasePrice: v.costPrice, SalesPrice: v.salesPrice,
       StockValueCost: v.cost,
       StockValueSales: v.sales
+    }));
+    const voucherRows = this.voucherProfits().map(v => ({
+      Invoice: v.invoice, Date: v.date, Customer: v.customer,
+      Lines: v.lineCount, Qty: v.qty,
+      Revenue: v.revenue, Returns: v.returns, NetRevenue: v.netRevenue,
+      Cost: v.cost, Profit: v.profit, MarginPercent: v.margin,
+      CostIncomplete: v.costIncomplete ? 'Yes' : ''
     }));
 
     const moneyRows = this.moneyRows().map(row => ({
@@ -834,7 +1159,8 @@ export class Reports {
       { name: 'Money Flow', rows: moneyRows },
       { name: 'Product Profit', rows: productRows },
       { name: 'Category Profit', rows: categoryRows },
-      { name: 'Stock Valuation', rows: stockRows }
+      { name: 'Stock Valuation', rows: stockRows },
+      { name: 'Voucher Profit', rows: voucherRows }
     ]).then(() => this.session.log('Export', `Reports exported (${this.fromDate()} to ${this.toDate()})`))
       .catch(error => this.notify.error(error instanceof Error ? error.message : String(error), this.prefs.txt('এক্সপোর্ট ব্যর্থ', 'Export failed')));
   }

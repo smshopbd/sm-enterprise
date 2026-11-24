@@ -1063,56 +1063,62 @@ const PRODUCT_TABLE_VIEW_KEY = 'sm_products_table_view_v1';
               </div>
             </div>
 
-            <!-- Row 5b: Extra selling units -->
+            <!-- Row 5b: Multi-unit selling setup -->
             @if (formType === 'single') {
               <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-3 space-y-2.5">
-                <div class="flex items-start justify-between gap-2">
+                <label class="flex items-start justify-between gap-3 cursor-pointer">
                   <div>
-                    <p class="font-bold text-xs text-slate-800">{{ prefs.txt("একাধিক ইউনিট (ঐচ্ছিক)", "Extra Selling Units (optional)") }}</p>
-                    <p class="text-[10px] text-slate-500 leading-snug">{{ prefs.txt("স্টক সবসময় বেস ইউনিটেই রাখা হয়; বিক্রয়/POS-এ ক্যাশিয়ার ইউনিট বেছে নেবেন। যেমন: ১ কেজি = ১০০০ গ্রাম।", "Stock always stays in the base unit; the cashier picks the unit at sale time. e.g. 1 কেজি = 1000 গ্রাম.") }}</p>
+                    <p class="font-bold text-xs text-slate-800">{{ prefs.txt("মাল্টি ইউনিট পণ্য (ঐচ্ছিক)", "Multi-Unit Product (optional)") }}</p>
+                    <p class="text-[10px] text-slate-500 leading-snug">{{ prefs.txt("একই স্টক থেকেই গজ/কেজি/গ্রাম/পিস বিক্রি হবে — শুধু বিক্রির সময় ক্যাশিয়ার ইউনিট বাছবেন, প্রতিটি ইউনিটের দর আলাদা বসবে।", "One shared stock for গজ/কেজি/গ্রাম/পিস — the cashier only picks the unit at sale time, each with its own price.") }}</p>
                   </div>
-                  <button type="button" (click)="addFormUnit()" class="shrink-0 inline-flex items-center gap-1 rounded-lg border border-teal-300 bg-white text-teal-700 hover:bg-teal-50 px-2 py-1.5 text-[11px] font-bold cursor-pointer">
-                    <mat-icon class="text-sm">add</mat-icon>{{ prefs.txt("ইউনিট", "Unit") }}
-                  </button>
-                </div>
-                @for (unit of formUnits; track $index; let i = $index) {
-                  <div class="grid grid-cols-2 md:grid-cols-12 gap-2 items-center rounded-lg border border-slate-200 bg-white p-2">
-                    <div class="md:col-span-3">
-                      <select [(ngModel)]="unit.name" (ngModelChange)="onUnitRowChange()" class="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-medium bg-white outline-none focus:ring-2 focus:ring-teal-500">
-                        <option value="">{{ prefs.txt("ইউনিট বাছুন...", "Select unit...") }}</option>
-                        @for (option of unitOptions(); track option) {
-                          @if (option !== formUnit) {
-                            <option [value]="option">{{ option }}</option>
+                  <input type="checkbox" class="mt-1 h-4 w-4 shrink-0 accent-teal-700 cursor-pointer" [(ngModel)]="formMultiUnit" (ngModelChange)="onMultiUnitToggle($event)" />
+                </label>
+                @if (formMultiUnit) {
+                  <div class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-teal-100 bg-teal-50/70 px-2 py-1.5">
+                    <span class="inline-flex items-center gap-1 text-[10px] font-bold text-teal-700">
+                      <mat-icon class="text-[13px]">inventory</mat-icon>{{ prefs.txt("স্টক একটাই:", "Shared stock:") }} {{ formUnit || prefs.txt('বেস ইউনিট', 'base unit') }}
+                    </span>
+                    <button type="button" (click)="addFormUnit()" class="inline-flex items-center gap-1 rounded-lg border border-teal-300 bg-white text-teal-700 hover:bg-teal-50 px-2 py-1.5 text-[11px] font-bold cursor-pointer">
+                      <mat-icon class="text-sm">add</mat-icon>{{ prefs.txt("ইউনিট", "Unit") }}
+                    </button>
+                  </div>
+                  @for (unit of formUnits; track $index; let i = $index) {
+                    <div class="grid grid-cols-2 md:grid-cols-12 gap-2 items-center rounded-lg border border-slate-200 bg-white p-2">
+                      <div class="md:col-span-3">
+                        <select [(ngModel)]="unit.name" (ngModelChange)="onUnitRowChange()" class="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-medium bg-white outline-none focus:ring-2 focus:ring-teal-500">
+                          <option value="">{{ prefs.txt("ইউনিট বাছুন...", "Select unit...") }}</option>
+                          @for (option of unitOptions(); track option) {
+                            @if (option !== formUnit) {
+                              <option [value]="option">{{ option }}</option>
+                            }
                           }
+                        </select>
+                      </div>
+                      <div class="md:col-span-4 flex flex-wrap items-center gap-1">
+                        @if (unit.inverse) {
+                          <span class="text-[11px] font-bold text-slate-600 shrink-0">1 {{ formUnit }}</span>
+                        } @else {
+                          <span class="text-[11px] font-bold text-slate-600 shrink-0 max-w-[80px] truncate">1 {{ unit.name || '…' }}</span>
                         }
-                      </select>
+                        <span class="text-[11px] font-bold text-slate-400 shrink-0">=</span>
+                        <input type="number" min="0" step="any" [(ngModel)]="unit.factor" class="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-mono font-bold outline-none focus:ring-2 focus:ring-teal-500" [placeholder]="prefs.txt('১', '1')">
+                        <span class="text-[11px] font-bold text-slate-500 shrink-0 max-w-[80px] truncate">{{ unit.inverse ? (unit.name || '…') : formUnit }}</span>
+                        <button type="button" (click)="toggleUnitDirection(i)" class="shrink-0 grid h-6 w-6 place-items-center rounded-md text-slate-400 hover:text-teal-700 hover:bg-teal-50 cursor-pointer" [title]="prefs.txt('কোন পাশ এক — দিক বদলান', 'Swap which side is one')">
+                          <mat-icon class="text-sm">swap_horiz</mat-icon>
+                        </button>
+                      </div>
+                      <div class="md:col-span-3 flex items-center overflow-hidden rounded-lg border border-slate-300 bg-white focus-within:ring-2 focus-within:ring-teal-500">
+                        <span class="bg-slate-100 border-r border-slate-300 px-2 py-1.5 font-bold text-slate-600 text-[10px] whitespace-nowrap">TK/{{ unit.name || '…' }}</span>
+                        <input type="number" min="0" step="any" [(ngModel)]="unit.price" [placeholder]="autoUnitPrice(unit) ? prefs.txt('অটো ', 'auto ') + autoUnitPrice(unit) : prefs.txt('এই এককের দর', 'price per unit')" class="w-full px-2 py-1.5 text-xs font-mono font-bold outline-none">
+                      </div>
+                      <div class="md:col-span-2 flex justify-end">
+                        <button type="button" (click)="removeFormUnit(i)" class="w-7 h-7 inline-flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer" [title]="prefs.txt('সরান', 'Remove')">
+                          <mat-icon class="text-base">close</mat-icon>
+                        </button>
+                      </div>
                     </div>
-                    <div class="md:col-span-4 flex flex-wrap items-center gap-1">
-                      @if (unit.inverse) {
-                        <span class="text-[11px] font-bold text-slate-600 shrink-0">1 {{ formUnit }}</span>
-                      } @else {
-                        <span class="text-[11px] font-bold text-slate-600 shrink-0 max-w-[80px] truncate">1 {{ unit.name || '…' }}</span>
-                      }
-                      <span class="text-[11px] font-bold text-slate-400 shrink-0">=</span>
-                      <input type="number" min="0" step="any" [(ngModel)]="unit.factor" class="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-mono font-bold outline-none focus:ring-2 focus:ring-teal-500" [placeholder]="prefs.txt('সংখ্যা', 'count')">
-                      <span class="text-[11px] font-bold text-slate-500 shrink-0 max-w-[80px] truncate">{{ unit.inverse ? (unit.name || '…') : formUnit }}</span>
-                      <button type="button" (click)="toggleUnitDirection(i)" class="shrink-0 grid h-6 w-6 place-items-center rounded-md text-slate-400 hover:text-teal-700 hover:bg-teal-50 cursor-pointer" [title]="prefs.txt('কোন পাশ এক — দিক বদলান', 'Swap which side is one')">
-                        <mat-icon class="text-sm">swap_horiz</mat-icon>
-                      </button>
-                    </div>
-                    <div class="md:col-span-3 flex items-center overflow-hidden rounded-lg border border-slate-300 bg-white focus-within:ring-2 focus-within:ring-teal-500">
-                      <span class="bg-slate-100 border-r border-slate-300 px-2 py-1.5 font-bold text-slate-600 text-[10px] whitespace-nowrap">TK/{{ unit.name || '…' }}</span>
-                      <input type="number" min="0" step="any" [(ngModel)]="unit.price" [placeholder]="autoUnitPrice(unit) ? prefs.txt('অটো ', 'auto ') + autoUnitPrice(unit) : prefs.txt('এই এককের দর', 'price per unit')" class="w-full px-2 py-1.5 text-xs font-mono font-bold outline-none">
-                    </div>
-                    <div class="md:col-span-2 flex justify-end">
-                      <button type="button" (click)="removeFormUnit(i)" class="w-7 h-7 inline-flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer" [title]="prefs.txt('সরান', 'Remove')">
-                        <mat-icon class="text-base">close</mat-icon>
-                      </button>
-                    </div>
-                  </div>
-                }
-                @if (formUnits.length) {
-                  <p class="text-[10px] text-slate-400">{{ prefs.txt("প্রতিটি ইউনিটের দর আলাদা বসাতে পারবেন — যেমন ১ কেজি ১৭০ TK আর ১ পিস ১২ TK। খালি রাখলে বেস দাম থেকে অটো হিসাব হবে। ছোট একক হলে swap চিহ্নে দিক বদলে নিন: ১ প্যাকেট = ১৫ পিস।", "Give each unit its own price — e.g. 1 কেজি at 170 TK and 1 pcs at 12 TK. Leave it blank to derive it from the base price. For a smaller unit tap swap: 1 packet = 15 pcs.") }}</p>
+                  }
+                  <p class="text-[10px] text-slate-400">{{ prefs.txt("প্রতিটি ইউনিটের দর আলাদা বসাতে পারবেন — যেমন ১ কেজি ১৭০ TK আর ১ পিস ১২ TK। রূপান্তর খালি রাখলে ১:১ হিসাবে একই স্টক কমবে; কেজি↔গ্রাম বা রোল↔গজ মেলাতে চাইলে রূপান্তর দিন (১ প্যাকেট = ১৫ পিস হলে swap চিহ্নে দিক বদলান)।", "Give each unit its own price — e.g. 1 কেজি at 170 TK and 1 pcs at 12 TK. Leave the conversion blank to share the stock one-for-one; enter one when কেজি↔গ্রাম or roll↔গজ must reconcile (tap swap for 1 packet = 15 pcs).") }}</p>
                 }
               </div>
             }
@@ -2535,6 +2541,8 @@ export class Products {
   formUnit = '';
   /** Extra selling units; stock always stays counted in formUnit. */
   formUnits: { name: string; factor: number | string; price: number | string; inverse: boolean }[] = [];
+  /** Dedicated multi-unit setup: one shared stock, unit picked at sale time. */
+  formMultiUnit = false;
   formRack = '';
   formCode = '';
   formWarehouse = '';
@@ -3491,7 +3499,15 @@ export class Products {
   }
 
   addFormUnit() {
+    this.formMultiUnit = true;
     this.formUnits = [...this.formUnits, { name: '', factor: '', price: '', inverse: false }];
+    this.onFormActivity();
+  }
+
+  /** Turning the dedicated mode off drops the extra-unit rows with it. */
+  onMultiUnitToggle(enabled: boolean) {
+    this.formMultiUnit = enabled;
+    if (!enabled) this.formUnits = [];
     this.onFormActivity();
   }
 
@@ -3510,8 +3526,12 @@ export class Products {
     this.onFormActivity();
   }
 
-  /** The stored factor: base units per one unit. "১ প্যাকেট = ৪০ পিস" stores 1/40. */
+  /**
+   * The stored factor: base units per one unit. "১ প্যাকেট = ৪০ পিস" stores 1/40.
+   * A blank box means the unit shares the stock one-for-one (factor 1).
+   */
   private unitFactorFromRow(row: { factor: number | string; inverse?: boolean }): number {
+    if (row.factor === '' || row.factor === null || row.factor === undefined) return 1;
     const value = Number(row.factor) || 0;
     if (!(value > 0)) return 0;
     return row.inverse ? 1 / value : value;
@@ -3531,7 +3551,7 @@ export class Products {
         factor: this.unitFactorFromRow(row),
         price: Number(row.price)
       }))
-      .filter(row => row.name !== '' || row.factor > 0 || row.price > 0);
+      .filter(row => row.name !== '');
     if (!rows.length) return undefined;
     return rows.map(row => ({
       name: row.name,
@@ -3553,6 +3573,7 @@ export class Products {
     // Most items are counted in pieces; Settings → Unit decides what that is.
     this.formUnit = this.dataService.defaultUnitName();
     this.formUnits = [];
+    this.formMultiUnit = false;
     this.formRack = '';
     this.formCode = '';
     // Sensible defaults: most products are single items stored in the shop,
@@ -3600,12 +3621,14 @@ export class Products {
     this.formBrand = p.brand;
     this.formModel = p.model;
     this.formUnit = p.unit;
+    this.formMultiUnit = (p.units || []).length > 0;
     this.formUnits = (p.units || []).map(u => {
       const factor = Number(u.factor) || 0;
       const inverse = factor > 0 && factor < 1;
       return {
         name: u.name,
-        factor: inverse ? Math.round((1 / factor) * 1000) / 1000 : u.factor,
+        // A shared unit (factor 1) shows an empty box so it stays 1:1 on save.
+        factor: factor === 1 ? '' : inverse ? Math.round((1 / factor) * 1000) / 1000 : u.factor,
         price: u.price ?? '',
         inverse
       };
@@ -3955,8 +3978,7 @@ export class Products {
       if (key === baseKey) return this.prefs.txt(`"${unit.name}" বেস ইউনিটের নামেই আছে — আলাদা কোনো ইউনিট বেছে নিন।`, `"${unit.name}" is the base unit — pick a different one.`);
       if (seen.has(key)) return this.prefs.txt(`"${unit.name}" ইউনিট একাধিকবার যোগ করা আছে।`, `Unit "${unit.name}" is added more than once.`);
       seen.add(key);
-      if (!(unit.factor > 0)) return this.prefs.txt(`"${unit.name}" এর রূপান্তর ০ এর চেয়ে বড় হতে হবে।`, `The conversion for "${unit.name}" must be greater than 0.`);
-      if (unit.factor === 1) return this.prefs.txt(`"${unit.name}" এর রূপান্তর ১ হতে পারে না।`, `The conversion for "${unit.name}" cannot be 1.`);
+      if (!(unit.factor > 0)) return this.prefs.txt(`"${unit.name}" এর রূপান্তর ০ এর চেয়ে বড় হতে হবে, অথবা খালি রাখলে ১:১ ধরা হবে।`, `The conversion for "${unit.name}" must be greater than 0, or leave it blank for 1:1.`);
     }
     return '';
   }

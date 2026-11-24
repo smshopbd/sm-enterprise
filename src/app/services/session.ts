@@ -42,11 +42,124 @@ export interface UserAccount {
   pin?: string;
 }
 
+export type AuditCategory =
+  | 'sales' | 'purchases' | 'battery' | 'parties' | 'products' | 'stock'
+  | 'accounts' | 'warranty' | 'settings' | 'security' | 'data' | 'other';
+
+export interface AuditCategoryMeta {
+  key: AuditCategory;
+  bn: string;
+  en: string;
+}
+
+export const AUDIT_CATEGORIES: AuditCategoryMeta[] = [
+  { key: 'sales', bn: 'বিক্রয় ও POS', en: 'Sales & POS' },
+  { key: 'purchases', bn: 'ক্রয়', en: 'Purchases' },
+  { key: 'battery', bn: 'ব্যাটারি', en: 'Battery' },
+  { key: 'parties', bn: 'পার্টি ও লেজার', en: 'Parties & Ledger' },
+  { key: 'products', bn: 'পণ্য', en: 'Products' },
+  { key: 'stock', bn: 'স্টক', en: 'Stock' },
+  { key: 'accounts', bn: 'হিসাব ও ক্যাশ', en: 'Accounts & Cash' },
+  { key: 'warranty', bn: 'ওয়ারেন্টি', en: 'Warranty' },
+  { key: 'settings', bn: 'সেটিংস', en: 'Settings' },
+  { key: 'security', bn: 'ইউজার ও নিরাপত্তা', en: 'Users & Security' },
+  { key: 'data', bn: 'ব্যাকআপ ও ডাটা', en: 'Backup & Data' },
+  { key: 'other', bn: 'অন্যান্য', en: 'Other' }
+];
+
+/**
+ * Categories come from the action name so every call site stays a plain
+ * log(action, detail); actions shared by pages (Print, Export) must therefore
+ * keep the meaning of the page that writes them.
+ */
+const AUDIT_CATEGORY_BY_ACTION: Record<string, AuditCategory> = {
+  'POS Sale': 'sales',
+  'Sale Created': 'sales',
+  'Sale Updated': 'sales',
+  'Sale Deleted': 'sales',
+  'Purchase Created': 'purchases',
+  'Purchase Updated': 'purchases',
+  'Purchase Deleted': 'purchases',
+  'Battery Voucher': 'battery',
+  'Party Created': 'parties',
+  'Party Updated': 'parties',
+  'Party Deleted': 'parties',
+  'Party Opening Changed': 'parties',
+  'Opening Balance Corrected': 'parties',
+  'Supplier Payment': 'parties',
+  'Payment Received': 'parties',
+  'Supplier Payment Edited': 'parties',
+  'Payment Received Edited': 'parties',
+  'Supplier Return': 'parties',
+  'Customer Added': 'parties',
+  'Product Created': 'products',
+  'Product Updated': 'products',
+  'Product Deleted': 'products',
+  'Product Cloned': 'products',
+  'Products Deleted': 'products',
+  'Product Import': 'products',
+  'Brand Created': 'products',
+  'Brand Updated': 'products',
+  'Brand Deleted': 'products',
+  'Model Created': 'products',
+  'Model Updated': 'products',
+  'Model Deleted': 'products',
+  'Category Created': 'products',
+  'Category Updated': 'products',
+  'Category Deleted': 'products',
+  'Sub Category Created': 'products',
+  'Sub Category Updated': 'products',
+  'Sub Category Deleted': 'products',
+  'Stock Reconciled': 'stock',
+  'Cash Closing': 'accounts',
+  'Delete': 'accounts',
+  'Print': 'accounts',
+  'Export': 'accounts',
+  'Warranty Stock Supplier Movement': 'warranty',
+  'Warranty Stock Edited': 'warranty',
+  'Warranty Stock Deleted': 'warranty',
+  'Warranty Stock Adjustment': 'warranty',
+  'Settings Changed': 'settings',
+  'Theme Changed': 'settings',
+  'Settings Reset': 'settings',
+  'Warehouse Added': 'settings',
+  'Warehouse Renamed': 'settings',
+  'Warehouse Deleted': 'settings',
+  'Unit Added': 'settings',
+  'Unit Renamed': 'settings',
+  'Unit Deleted': 'settings',
+  'Default Unit Set': 'settings',
+  'Admin Setup': 'security',
+  'Login': 'security',
+  'Logout': 'security',
+  'User Created': 'security',
+  'User Updated': 'security',
+  'User Deleted': 'security',
+  'Password Changed': 'security',
+  'Audit Cleared': 'security',
+  'Cloud Settings': 'data',
+  'Cloud Sync': 'data',
+  'Supabase Test': 'data',
+  'Cloudinary Test': 'data',
+  'Restore Review': 'data',
+  'Sync Conflict': 'data',
+  'Backup Exported': 'data',
+  'Backup Imported': 'data',
+  'Cloud Backup': 'data',
+  'Audit Exported': 'data',
+  'Hard Reset': 'data'
+};
+
+export function auditCategoryOf(action: string): AuditCategory {
+  return AUDIT_CATEGORY_BY_ACTION[(action || '').trim()] ?? 'other';
+}
+
 export interface AuditEntry {
   id: number;
   at: string;
   user: string;
   role: UserRole;
+  category: AuditCategory;
   action: string;
   detail: string;
 }
@@ -59,7 +172,9 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
 
 export const USERS_KEY = 'sm_users_v1';
 export const SESSION_KEY = 'sm_session_v1';
-export const AUDIT_KEY = 'sm_audit_v1';
+export const AUDIT_KEY = 'sm_audit_v2';
+/** Pre-category trail; dropped on load so it never returns through sync. */
+export const LEGACY_AUDIT_KEY = 'sm_audit_v1';
 /** Only the last three days are kept, per the shop's audit policy. */
 export const AUDIT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 const AUDIT_MAX_ENTRIES = 2000;
@@ -106,6 +221,7 @@ export class SessionService {
 
   /** Runs once the database is hydrated; replaces the old constructor loads. */
   load(): void {
+    this.dropLegacyAudit();
     this.readFromStorage();
     this.restoreCloudKey();
     this.persistUsers();
@@ -253,7 +369,7 @@ export class SessionService {
     if (!this.cloud) return { ok: false, error: 'cloud' };
     const result = await this.cloud.hardReset();
     if (!result.ok) return result;
-    this.auditLogs.set([]);
+    this.clearAudit();
     this.log('Hard Reset', `${user.name} পুরো ডাটাবেস মুছে নতুন করে শুরু করেছেন`);
     this.authorizationRevision.update(value => value + 1);
     this.currentUser.set(null);
@@ -294,11 +410,18 @@ export class SessionService {
       at: new Date().toISOString(),
       user: user ? user.name : 'System',
       role: user ? user.role : 'Admin',
+      category: auditCategoryOf(action),
       action,
       detail
     };
     this.auditLogs.set(this.pruneAudit([entry, ...this.auditLogs()]));
     this.storage.write(AUDIT_KEY, this.auditLogs());
+  }
+
+  /** Wipes this device's trail; callers log their own reason afterwards. */
+  clearAudit(): void {
+    this.auditLogs.set([]);
+    this.storage.write(AUDIT_KEY, []);
   }
 
   /** Drops entries older than the retention window and caps runaway growth. */
@@ -307,6 +430,7 @@ export class SessionService {
     const cutoff = Date.now() - AUDIT_RETENTION_MS;
     return list
       .filter(entry => entry && typeof entry.at === 'string' && Date.parse(entry.at) >= cutoff)
+      .map(entry => ({ ...entry, category: entry.category ?? auditCategoryOf(entry.action) }))
       .slice(0, AUDIT_MAX_ENTRIES);
   }
 
@@ -585,6 +709,10 @@ export class SessionService {
     this.cloud?.setUserKey(key);
     // A reload keeps the login, so the shop must resume syncing on its own.
     this.cloud?.startSync();
+  }
+
+  private dropLegacyAudit(): void {
+    if (this.storage.read<unknown>(LEGACY_AUDIT_KEY) !== null) this.storage.remove(LEGACY_AUDIT_KEY);
   }
 
   private readFromStorage(): void {

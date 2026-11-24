@@ -7,6 +7,7 @@ export interface SoldLine {
   variantId?: number;
   productName: string;
   quantity?: number;
+  unit?: string;
   unitFactor?: number;
 }
 

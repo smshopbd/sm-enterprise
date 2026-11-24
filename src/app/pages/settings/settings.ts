@@ -5,7 +5,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { downloadWorkbook } from '../../utils/spreadsheet';
 import { DataService, UnitOption } from '../../services/data';
 import { NotificationService } from '../../services/notification';
-import { Permission, SessionService, UserAccount, UserRole } from '../../services/session';
+import {
+  AUDIT_CATEGORIES, AuditCategory, Permission, SessionService, UserAccount, UserRole
+} from '../../services/session';
 import { AccentKey, PreferencesService, TableBorderMode, TableHoverTone, ThemeMode } from '../../services/preferences';
 import { CloudService } from '../../services/cloud';
 import type { CloudSyncConflict, SyncReport } from '../../services/cloud';
@@ -1030,47 +1032,72 @@ const PERMISSION_LABELS: { key: Permission; bn: string; en: string }[] = [
 
         <!-- AUDIT TAB -->
         @if (tab() === 'audit') {
-          <div class="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
-            <div class="px-4 py-3 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <h3 class="font-bold text-sm text-slate-900">
-                {{ prefs.t('settings.audit') }} ({{ filteredLogs().length }})
-                <span class="ml-1 text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold">{{ prefs.txt('শেষ ৩ দিন', 'Last 3 days') }}</span>
-              </h3>
-              <div class="flex items-center gap-2">
+          <div class="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden dark:border-slate-800 dark:bg-slate-900">
+            <div class="px-4 py-3 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row lg:items-center justify-between gap-2 dark:border-slate-700 dark:bg-slate-800/60">
+              <div class="flex items-center gap-2 flex-wrap">
+                <h3 class="font-bold text-sm text-slate-900 dark:text-white">
+                  {{ prefs.t('settings.audit') }} ({{ filteredLogs().length }})
+                </h3>
+                <span class="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold dark:bg-slate-700 dark:text-slate-300">{{ prefs.txt('শেষ ৩ দিন', 'Last 3 days') }}</span>
+                <span class="text-[10px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded font-bold dark:bg-teal-950/40 dark:text-teal-300">{{ auditCategoryStats().items.length }} {{ prefs.txt('ক্যাটেগরি', 'categories') }}</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
                 <input type="text" [ngModel]="auditQuery()" (ngModelChange)="auditQuery.set($event); logsPager.setPage(1)"
                   placeholder="{{ prefs.t('common.search') }}..."
-                  class="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-44">
+                  class="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-44 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
                 <button (click)="exportAudit()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer">
                   <mat-icon class="text-xs">download</mat-icon> {{ prefs.t('common.excel') }}
                 </button>
+                @if (session.has('manageSettings')) {
+                  <button (click)="clearAuditLogs()" class="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer">
+                    <mat-icon class="text-xs">delete_sweep</mat-icon> {{ prefs.txt('লগ মুছুন', 'Clear logs') }}
+                  </button>
+                }
               </div>
             </div>
 
+            <div class="px-4 py-2.5 border-b border-slate-100 flex flex-wrap items-center gap-1.5 dark:border-slate-800">
+              <button type="button" (click)="setAuditCategory('all')" [class]="auditChipClass('all')">
+                {{ prefs.txt('সব', 'All') }}
+                <span class="rounded-full bg-black/10 px-1">{{ auditCategoryStats().total }}</span>
+              </button>
+              @for (cat of auditCategoryStats().items; track cat.key) {
+                <button type="button" (click)="setAuditCategory(cat.key)" [class]="auditChipClass(cat.key)">
+                  {{ prefs.language() === 'bn' ? cat.bn : cat.en }}
+                  <span class="rounded-full bg-black/10 px-1">{{ cat.count }}</span>
+                </button>
+              }
+            </div>
+
             <div class="overflow-x-auto max-h-[60vh] overflow-y-auto">
-              <table class="w-full text-xs text-left">
-                <thead class="bg-slate-50 text-slate-600 font-bold uppercase border-b border-slate-200 sticky top-0">
+              <table class="w-full min-w-[720px] text-xs text-left">
+                <thead class="bg-slate-50 text-slate-600 font-bold uppercase border-b border-slate-200 sticky top-0 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
                   <tr>
                     <th class="p-3">{{ prefs.t('settings.time') }}</th>
+                    <th class="p-3">{{ prefs.txt('ক্যাটেগরি', 'Category') }}</th>
                     <th class="p-3">{{ prefs.t('settings.user') }}</th>
                     <th class="p-3">{{ prefs.t('settings.role') }}</th>
                     <th class="p-3">{{ prefs.t('settings.action') }}</th>
                     <th class="p-3">{{ prefs.t('settings.detail') }}</th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-slate-100">
+                <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
                   @for (logItem of logsPager.paged(); track logItem.id) {
-                    <tr class="hover:bg-slate-50">
-                      <td class="p-3 font-mono text-slate-500 whitespace-nowrap">{{ logItem.at | date:'dd-MM-yyyy HH:mm:ss' }}</td>
-                      <td class="p-3 font-semibold text-slate-800">{{ logItem.user }}</td>
+                    <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                      <td class="p-3 font-mono text-slate-500 whitespace-nowrap dark:text-slate-400">{{ logItem.at | date:'dd-MM-yyyy HH:mm:ss' }}</td>
+                      <td class="p-3">
+                        <span [class]="auditCategoryClass(logItem.category)" class="px-2 py-0.5 rounded text-[10px] font-bold whitespace-nowrap">{{ auditCategoryLabel(logItem.category) }}</span>
+                      </td>
+                      <td class="p-3 font-semibold text-slate-800 dark:text-slate-100">{{ logItem.user }}</td>
                       <td class="p-3">
                         <span [class]="roleClass(logItem.role)" class="px-2 py-0.5 rounded text-[10px] font-bold">{{ roleLabel(logItem.role) }}</span>
                       </td>
-                      <td class="p-3 font-semibold text-teal-700">{{ logItem.action }}</td>
-                      <td class="p-3 text-slate-600">{{ logItem.detail }}</td>
+                      <td class="p-3 font-semibold text-teal-700 dark:text-teal-300">{{ logItem.action }}</td>
+                      <td class="p-3 text-slate-600 dark:text-slate-400">{{ logItem.detail }}</td>
                     </tr>
                   } @empty {
                     <tr>
-                      <td colspan="5" class="p-6 text-center text-slate-400">{{ prefs.t('common.noData') }}</td>
+                      <td colspan="6" class="p-6 text-center text-slate-400 dark:text-slate-500">{{ prefs.t('common.noData') }}</td>
                     </tr>
                   }
                 </tbody>
@@ -1235,6 +1262,7 @@ export class Settings {
   showUserPin = signal<boolean>(false);
 
   auditQuery = signal<string>('');
+  auditCategory = signal<AuditCategory | 'all'>('all');
 
   tabs: { key: SettingsTab; bn: string; en: string }[] = [
     { key: 'business', bn: 'ব্যবসার তথ্য', en: 'Business' },
@@ -1529,7 +1557,9 @@ export class Settings {
 
   filteredLogs = computed(() => {
     const q = this.auditQuery().toLowerCase().trim();
-    const logs = this.session.auditLogs();
+    const category = this.auditCategory();
+    let logs = this.session.auditLogs();
+    if (category !== 'all') logs = logs.filter(l => l.category === category);
     if (!q) return logs;
     return logs.filter(l =>
       l.user.toLowerCase().includes(q) ||
@@ -1539,7 +1569,74 @@ export class Settings {
     );
   });
 
+  readonly auditCategoryStats = computed(() => {
+    const logs = this.session.auditLogs();
+    const counts = new Map<AuditCategory, number>();
+    for (const logItem of logs) counts.set(logItem.category, (counts.get(logItem.category) ?? 0) + 1);
+    return {
+      total: logs.length,
+      items: AUDIT_CATEGORIES
+        .filter(meta => counts.has(meta.key))
+        .map(meta => ({ ...meta, count: counts.get(meta.key) ?? 0 }))
+    };
+  });
+
   readonly logsPager = createPager(() => this.filteredLogs());
+
+  setAuditCategory(key: AuditCategory | 'all') {
+    this.auditCategory.set(key);
+    this.logsPager.setPage(1);
+  }
+
+  auditCategoryLabel(category: AuditCategory): string {
+    const meta = AUDIT_CATEGORIES.find(item => item.key === category);
+    if (!meta) return category;
+    return this.prefs.language() === 'bn' ? meta.bn : meta.en;
+  }
+
+  auditCategoryClass(category: AuditCategory): string {
+    switch (category) {
+      case 'sales': return 'bg-emerald-100 text-emerald-800';
+      case 'purchases': return 'bg-sky-100 text-sky-800';
+      case 'battery': return 'bg-amber-100 text-amber-800';
+      case 'parties': return 'bg-violet-100 text-violet-800';
+      case 'products': return 'bg-teal-100 text-teal-800';
+      case 'stock': return 'bg-lime-100 text-lime-800';
+      case 'accounts': return 'bg-indigo-100 text-indigo-800';
+      case 'warranty': return 'bg-fuchsia-100 text-fuchsia-800';
+      case 'settings': return 'bg-slate-200 text-slate-700';
+      case 'security': return 'bg-rose-100 text-rose-800';
+      case 'data': return 'bg-cyan-100 text-cyan-800';
+      default: return 'bg-slate-100 text-slate-600';
+    }
+  }
+
+  auditChipClass(key: AuditCategory | 'all'): string {
+    return this.auditCategory() === key
+      ? 'inline-flex items-center gap-1 rounded-full bg-teal-600 px-2.5 py-1 text-[10px] font-bold text-white cursor-pointer'
+      : 'inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600 hover:bg-slate-200 cursor-pointer dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700';
+  }
+
+  async clearAuditLogs() {
+    if (!this.session.has('manageSettings')) return;
+    const confirmed = await this.notify.confirm(
+      this.prefs.txt(
+        'শেষ ৩ দিনের সব অডিট লগ স্থায়ীভাবে মুছে যাবে। এই কাজ ফেরানো যাবে না।',
+        'Every audit entry from the last 3 days will be permanently deleted. This cannot be undone.'
+      ),
+      {
+        title: this.prefs.txt('সব অডিট লগ মুছবেন?', 'Delete all audit logs?'),
+        kind: 'error',
+        confirmText: this.prefs.txt('মুছে ফেলুন', 'Delete all'),
+        cancelText: this.prefs.txt('বাতিল', 'Cancel')
+      }
+    );
+    if (!confirmed) return;
+    this.session.clearAudit();
+    this.session.log('Audit Cleared', this.prefs.txt('সব পুরোনো অডিট লগ মুছে ফেলা হয়েছে', 'All previous audit entries were deleted'));
+    this.setAuditCategory('all');
+    this.notify.success(this.prefs.txt('অডিট লগ মুছে ফেলা হয়েছে।', 'Audit log cleared.'));
+  }
 
   roleLabel(role: UserRole): string {
     if (role === 'Admin') return this.prefs.t('role.admin');
@@ -1919,6 +2016,7 @@ export class Settings {
   exportAudit() {
     const rows = this.filteredLogs().map(l => ({
       Time: new Date(l.at).toLocaleString('en-GB'),
+      Category: this.auditCategoryLabel(l.category),
       User: l.user,
       Role: l.role,
       Action: l.action,

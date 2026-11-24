@@ -13,6 +13,7 @@ import { localDateIso } from '../../utils/local-date';
 import { DmyDateDirective } from '../../directives/dmy-date.directive';
 import { PartyStatement } from '../party-statement/party-statement';
 import { PartyReminderDialog } from '../party-reminder-dialog/party-reminder-dialog';
+import { PasscodeModal } from '../passcode-modal/passcode-modal';
 
 interface LedgerRow {
   key: string;
@@ -35,6 +36,7 @@ interface DepositRow {
   amount: number;
   ref: string;
   note: string;
+  payment?: LedgerPayment;
 }
 
 /** Top-level categories inside the party profile. */
@@ -46,7 +48,7 @@ const PROFILE_ROWS = 25;
 @Component({
   selector: 'app-party-ledger',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [CommonModule, FormsModule, MatIconModule, DmyDateDirective, PartyStatement, PartyReminderDialog],
+  imports: [CommonModule, FormsModule, MatIconModule, DmyDateDirective, PartyStatement, PartyReminderDialog, PasscodeModal],
   template: `
     @if (!paymentOnly()) {
     <div class="fixed inset-0 z-50 flex justify-end select-none">
@@ -331,9 +333,16 @@ const PROFILE_ROWS = 25;
                         <td class="p-2 text-right font-mono font-bold text-slate-900">{{ row.balance | number:'1.2-2' }}</td>
                         <td class="p-2 text-center">
                           @if (row.payment) {
-                            <button (click)="$event.stopPropagation(); showReceipt(row.payment!)" class="text-slate-500 hover:text-teal-700" [title]="prefs.t('ledger.printReceipt')">
-                              <mat-icon class="text-sm">print</mat-icon>
-                            </button>
+                            <span class="inline-flex items-center gap-1">
+                              @if (isAdmin() && !row.payment.batteryFundTransferId) {
+                                <button (click)="$event.stopPropagation(); openEditPayment(row.payment!)" class="text-slate-400 hover:text-amber-600" [title]="prefs.txt('পেমেন্ট সংশোধন (অ্যাডমিন পিন)', 'Edit payment (admin PIN)')">
+                                  <mat-icon class="text-sm">edit</mat-icon>
+                                </button>
+                              }
+                              <button (click)="$event.stopPropagation(); showReceipt(row.payment!)" class="text-slate-500 hover:text-teal-700" [title]="prefs.t('ledger.printReceipt')">
+                                <mat-icon class="text-sm">print</mat-icon>
+                              </button>
+                            </span>
                           } @else {
                             <mat-icon class="text-[15px] text-slate-300">chevron_right</mat-icon>
                           }
@@ -413,6 +422,11 @@ const PROFILE_ROWS = 25;
                       <div class="shrink-0 text-right">
                         <p class="font-mono text-sm font-black text-emerald-700">+{{ row.amount | number:'1.2-2' }}</p>
                         <p class="text-[9px] text-slate-400">TK</p>
+                        @if (row.payment && isAdmin() && !row.payment.batteryFundTransferId) {
+                          <button (click)="openEditPayment(row.payment!)" class="mt-0.5 text-slate-400 hover:text-amber-600" [title]="prefs.txt('পেমেন্ট সংশোধন (অ্যাডমিন পিন)', 'Edit payment (admin PIN)')">
+                            <mat-icon class="text-xs">edit</mat-icon>
+                          </button>
+                        }
                       </div>
                     </div>
                   }
@@ -671,10 +685,12 @@ const PROFILE_ROWS = 25;
           <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
             <div class="min-w-0">
               <h3 class="font-bold text-sm flex items-center gap-1.5">
-                <mat-icon class="text-emerald-600 text-base">payments</mat-icon>
-                {{ prefs.t('ledger.recordPayment') }}
+                <mat-icon class="text-emerald-600 text-base">{{ editingPayment() ? 'edit' : 'payments' }}</mat-icon>
+                {{ editingPayment() ? prefs.txt('পেমেন্ট সংশোধন', 'Edit payment') : prefs.t('ledger.recordPayment') }}
               </h3>
-              @if (paymentOnly()) {
+              @if (editingPayment(); as ep) {
+                <p class="mt-0.5 truncate text-[10px] font-semibold text-amber-600">{{ ep.receiptNo }} · {{ formatDate(ep.date) }}</p>
+              } @else if (paymentOnly()) {
                 <p class="mt-0.5 truncate text-[10px] font-semibold text-slate-500">{{ party().name }}</p>
               }
             </div>
@@ -713,13 +729,23 @@ const PROFILE_ROWS = 25;
               <input type="text" [(ngModel)]="payNote" class="w-full border border-slate-300 rounded-lg p-2 focus:border-teal-500 focus:outline-none" placeholder="..." />
             </div>
             <p class="text-[10px] text-slate-500">{{ isSupplier() ? prefs.txt('প্রদেয়', 'Payable') : prefs.t('ledger.dueAmount') }}: <b class="font-mono text-rose-600">{{ (account().due < 0 ? -account().due : account().due) | number:'1.2-2' }} TK</b></p>
+            @if (editingPayment()) {
+              <p class="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] font-semibold text-amber-800">
+                {{ prefs.txt('সংশোধন করলে আগের হিসাব উল্টে নতুন অঙ্ক বসবে। সংরক্ষণ করতে অ্যাডমিন পিন লাগবে।', 'Saving reverses the old entry and applies the new figures. The admin PIN is required.') }}
+              </p>
+            }
             @if (formError()) {
               <p class="text-rose-600 font-semibold bg-rose-50 border border-rose-100 rounded-lg px-2.5 py-1.5">{{ formError() }}</p>
             }
           </div>
           <div class="px-4 py-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
             <button (click)="closePayment()" class="px-3 py-2 bg-white border border-slate-300 rounded-lg font-semibold text-slate-700">{{ prefs.t('common.cancel') }}</button>
-            <button (click)="savePayment()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold">{{ prefs.t('common.save') }}</button>
+            <button (click)="savePayment()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold flex items-center gap-1">
+              @if (editingPayment()) {
+                <mat-icon class="text-sm">lock</mat-icon>
+              }
+              {{ editingPayment() ? prefs.txt('পিন দিয়ে সংরক্ষণ', 'Save with PIN') : prefs.t('common.save') }}
+            </button>
           </div>
         </div>
       </div>
@@ -834,6 +860,11 @@ const PROFILE_ROWS = 25;
           </div>
 
           <div class="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2">
+            @if (row.payment && isAdmin() && !row.payment.batteryFundTransferId) {
+              <button (click)="openEditPayment(row.payment!)" class="flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-600">
+                <mat-icon class="text-xs">edit</mat-icon> {{ prefs.txt('সংশোধন', 'Edit') }}
+              </button>
+            }
             @if (row.payment) {
               <button (click)="showReceipt(row.payment!)" class="flex items-center gap-1 rounded-lg bg-slate-700 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-slate-800">
                 <mat-icon class="text-xs">print</mat-icon> {{ prefs.t('ledger.printReceipt') }}
@@ -921,6 +952,15 @@ const PROFILE_ROWS = 25;
         [depositTotal]="depositTotal()"
         (close)="showStatement.set(false)" />
     }
+
+    @if (showEditPin()) {
+      <app-passcode-modal
+        [elevate]="true"
+        [title]="prefs.txt('পেমেন্ট সংশোধন', 'Edit payment')"
+        [message]="prefs.txt('জমা করা পেমেন্ট সংশোধন করতে অ্যাডমিন পিন দিন। আগের এন্ট্রি উল্টে নতুন অঙ্ক হিসাবে বসবে।', 'Enter the admin PIN to correct this payment. The old entry is reversed and the new figures are applied.')"
+        (verified)="confirmEditPayment()"
+        (close)="showEditPin.set(false)" />
+    }
   `
 })
 export class PartyLedger implements OnInit {
@@ -986,6 +1026,10 @@ export class PartyLedger implements OnInit {
   prefs = inject(PreferencesService);
 
   showPayment = signal<boolean>(false);
+  /** Receipt being corrected; null while recording a new payment. */
+  editingPayment = signal<LedgerPayment | null>(null);
+  showEditPin = signal<boolean>(false);
+  readonly isAdmin = computed(() => this.session.currentUser()?.role === 'Admin');
   showReturn = signal<boolean>(false);
   showStatement = signal<boolean>(false);
   receipt = signal<LedgerPayment | null>(null);
@@ -1302,7 +1346,8 @@ export class PartyLedger implements OnInit {
         mode: pay.mode || 'Cash',
         amount,
         ref: pay.receiptNo,
-        note
+        note,
+        payment: pay
       });
     }
 
@@ -1409,6 +1454,7 @@ export class PartyLedger implements OnInit {
 
   openPayment() {
     const prefill = this.num(this.paymentPrefill());
+    this.editingPayment.set(null);
     this.payAmount = prefill > 0 ? prefill : null;
     this.payDiscount = 0;
     this.payMode = 'Cash';
@@ -1418,9 +1464,25 @@ export class PartyLedger implements OnInit {
     this.showPayment.set(true);
   }
 
+  /** Admin-only correction of an already recorded receipt; saving asks for the admin PIN. */
+  openEditPayment(payment: LedgerPayment) {
+    if (!this.isAdmin()) return;
+    this.selectedRow.set(null);
+    this.editingPayment.set(payment);
+    this.payAmount = payment.amount;
+    this.payDiscount = payment.discount || 0;
+    this.payMode = payment.mode || 'Cash';
+    this.payDate = payment.date;
+    this.payNote = payment.note || '';
+    this.formError.set('');
+    this.showPayment.set(true);
+  }
+
   /** In payment-only mode dismissing the form closes the whole overlay. */
   closePayment() {
     this.showPayment.set(false);
+    this.editingPayment.set(null);
+    this.showEditPin.set(false);
     if (this.paymentOnly()) this.close.emit();
   }
 
@@ -1439,11 +1501,16 @@ export class PartyLedger implements OnInit {
 
   savePayment() {
     const amount = Number(this.payAmount) || 0;
-    const discount = Number(this.payDiscount) || 0;
     if (amount <= 0) {
       this.formError.set(this.prefs.t('ledger.invalidAmount'));
       return;
     }
+    if (this.editingPayment()) {
+      this.formError.set('');
+      this.showEditPin.set(true);
+      return;
+    }
+    const discount = Number(this.payDiscount) || 0;
     const payment = this.dataService.recordPayment({
       partyId: this.party().id,
       partyName: this.party().name,
@@ -1463,6 +1530,37 @@ export class PartyLedger implements OnInit {
     this.showPayment.set(false);
     this.receipt.set(payment);
     this.paymentSaved.emit(payment);
+  }
+
+  /** PIN accepted: reverse the old receipt and write the corrected figures. */
+  confirmEditPayment() {
+    const old = this.editingPayment();
+    this.showEditPin.set(false);
+    if (!old || !this.isAdmin()) return;
+    const amount = Number(this.payAmount) || 0;
+    if (amount <= 0) {
+      this.formError.set(this.prefs.t('ledger.invalidAmount'));
+      return;
+    }
+    const updated = this.dataService.updatePayment(old.id, {
+      amount,
+      discount: Number(this.payDiscount) || 0,
+      mode: this.payMode,
+      date: this.payDate,
+      note: this.payNote
+    });
+    if (!updated) {
+      this.formError.set(this.prefs.txt('পেমেন্টটি পাওয়া যায়নি — সম্ভবত মুছে ফেলা হয়েছে।', 'This payment no longer exists — it may have been deleted.'));
+      return;
+    }
+    this.session.log(
+      old.partyType === 'Supplier' ? 'Supplier Payment Edited' : 'Payment Received Edited',
+      `${this.party().name} — ${old.receiptNo}: ${old.amount.toFixed(2)} → ${amount.toFixed(2)} TK`
+    );
+    this.savedMsg.set(this.prefs.txt('পেমেন্ট সংশোধন হয়েছে', 'Payment corrected') + ` (${updated.receiptNo})`);
+    this.editingPayment.set(null);
+    this.showPayment.set(false);
+    this.receipt.set(updated);
   }
 
   saveReturn() {

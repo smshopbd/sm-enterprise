@@ -121,6 +121,42 @@ type TermsKey =
                   <input type="checkbox" [(ngModel)]="formSettings.showWatermark" class="w-5 h-5 accent-teal-600 cursor-pointer" />
                 </label>
               </div>
+
+              @if (voucherType() !== 'purchase') {
+                <div class="pt-2 border-t border-dashed border-slate-200">
+                  <p class="font-bold text-slate-700 mb-1.5">{{ prefs.txt('শুধু সেল ভাউচারে', 'Sales voucher only') }}</p>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <label class="flex items-center justify-between gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-teal-50/40">
+                      <span>
+                        <span class="font-bold text-slate-800 block">{{ prefs.txt('পরিশোধ সিল (PAID / বাকি)', 'Payment stamp (PAID / DUE)') }}</span>
+                        <span class="text-[10px] text-slate-500">{{ prefs.txt('হেডারে পরিশোধিত / বাকি / অগ্রিম সিল বসবে', 'A PAID / DUE / ADVANCE stamp is printed in the header') }}</span>
+                      </span>
+                      <input type="checkbox" [(ngModel)]="formSettings.showPaymentStatus" class="w-5 h-5 accent-teal-600 cursor-pointer" />
+                    </label>
+                    <label class="flex items-center justify-between gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-teal-50/40">
+                      <span>
+                        <span class="font-bold text-slate-800 block">{{ prefs.txt('পণ্যের কোড / ব্র্যান্ড / সিরিয়াল', 'Item code / brand / serial') }}</span>
+                        <span class="text-[10px] text-slate-500">{{ prefs.txt('পণ্যের নামের নিচে ছোট করে দেখাবে', 'Printed as a small line under the item name') }}</span>
+                      </span>
+                      <input type="checkbox" [(ngModel)]="formSettings.showItemCode" class="w-5 h-5 accent-teal-600 cursor-pointer" />
+                    </label>
+                    <label class="flex items-center justify-between gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-teal-50/40">
+                      <span>
+                        <span class="font-bold text-slate-800 block">{{ prefs.txt('কপি লেবেল', 'Copy labels') }}</span>
+                        <span class="text-[10px] text-slate-500">{{ prefs.txt('গ্রাহক কপি / অফিস কপি / হিসাব কপি', 'Customer / Office / Accounts copy') }}</span>
+                      </span>
+                      <input type="checkbox" [(ngModel)]="formSettings.showCopyLabels" class="w-5 h-5 accent-teal-600 cursor-pointer" />
+                    </label>
+                    <label class="flex items-center justify-between gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg cursor-pointer hover:bg-teal-50/40">
+                      <span>
+                        <span class="font-bold text-slate-800 block">{{ prefs.txt('কথায় টাকার পরিমাণ', 'Amount in words') }}</span>
+                        <span class="text-[10px] text-slate-500">{{ prefs.txt('মোট টাকার নিচে কথায় লেখা হবে', 'The total is also written out in words') }}</span>
+                      </span>
+                      <input type="checkbox" [(ngModel)]="formSettings.showAmountInWords" class="w-5 h-5 accent-teal-600 cursor-pointer" />
+                    </label>
+                  </div>
+                </div>
+              }
             </div>
           }
 
@@ -199,9 +235,27 @@ type TermsKey =
                   />
                 </div>
               </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-bold text-slate-700 mb-1">{{ prefs.txt('VAT / BIN নম্বর', 'VAT / BIN number') }}</label>
+                  <input
+                    type="text"
+                    [(ngModel)]="formSettings.vatRegNo"
+                    class="w-full border border-slate-300 rounded-lg p-2 font-mono font-semibold focus:border-teal-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold text-slate-700 mb-1">{{ prefs.txt('ট্রেড লাইসেন্স নম্বর', 'Trade license number') }}</label>
+                  <input
+                    type="text"
+                    [(ngModel)]="formSettings.tradeLicenseNo"
+                    class="w-full border border-slate-300 rounded-lg p-2 font-mono font-semibold focus:border-teal-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+              <p class="text-[10px] text-slate-500">{{ prefs.txt('মোবাইল, ইমেইল, VAT/BIN ও ট্রেড লাইসেন্স ভাউচারের হেডারে ছাপা হয় — খালি রাখলে ওই লাইন বাদ যায়।', 'Mobile, email, VAT/BIN and trade licence are printed in the voucher header — empty fields are skipped.') }}</p>
             </div>
           }
-
           <!-- TAB 3: DISPLAY & ADJUSTMENT -->
           @if (activeTab() === 'display') {
             <div class="space-y-4">

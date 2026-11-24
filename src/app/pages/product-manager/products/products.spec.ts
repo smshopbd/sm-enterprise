@@ -319,4 +319,32 @@ describe('Product edit stock', () => {
     component.openEditModal({ ...battery, unit: 'Packet', units: [{ name: 'PCS', factor: 0.066667, price: 30 }] });
     expect(component.formUnits[0]).toMatchObject({ name: 'PCS', factor: 15, inverse: true });
   });
+
+  it('saves a blank conversion as a shared factor-1 unit with its own price', () => {
+    const { component, saved } = editSetup({ ...battery, unit: 'গজ', salesPrice: 150 });
+    component.formSalesPrice = 150;
+    component.addFormUnit();
+    component.formUnits[0].name = 'কেজি';
+    component.formUnits[0].price = 800;
+    component.saveProductForm();
+    expect(saved).toHaveLength(1);
+    expect(saved[0].units?.[0]).toEqual({ name: 'কেজি', factor: 1, price: 800 });
+  });
+
+  it('reopens a shared unit with an empty conversion box', () => {
+    const product = { ...battery, unit: 'গজ', units: [{ name: 'কেজি', factor: 1, price: 800 }] };
+    const { component } = editSetup(product);
+    component.openEditModal(product);
+    expect(component.formMultiUnit).toBe(true);
+    expect(component.formUnits[0]).toMatchObject({ name: 'কেজি', factor: '', price: 800 });
+  });
+
+  it('turning the multi-unit mode off drops its rows', () => {
+    const { component } = editSetup();
+    component.addFormUnit();
+    component.formUnits[0].name = 'কেজি';
+    component.onMultiUnitToggle(false);
+    expect(component.formMultiUnit).toBe(false);
+    expect(component.formUnits).toEqual([]);
+  });
 });

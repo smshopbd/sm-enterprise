@@ -9,6 +9,8 @@ import { isWarrantyCancelled, isWarrantyCompleted } from '../../utils/warranty';
 import { qrDataUrl } from '../../utils/qr-code';
 import { saleQrText } from '../../utils/voucher-qr';
 import { saleItemDisplayName } from '../../utils/sale-item-label';
+import { findProductForLine } from '../../utils/report-analytics';
+import { takaInWords } from '../../utils/amount-words';
 import { VoucherSettingsModal } from '../voucher-settings-modal/voucher-settings-modal';
 import { ShareInvoiceComponent } from '../share-invoice/share-invoice';
 import {
@@ -246,6 +248,13 @@ export function planInvoicePages(
     .sp-invoice .sp-greeting { text-align: center; font-weight: 700; color: var(--v-accent, #087d6c); margin: 10px 0 16px; font-size: 12px; }
     .sp-terms { border-top: 1px solid #cbd5d5; margin-top: 10px; padding-top: 5px; font-size: 10px; color: #596770; }
     .sp-terms p { margin: 2px 0; }
+    .sp-copy-tag { display: flex; justify-content: flex-end; margin-bottom: 4px; padding-bottom: 2px; border-bottom: 1px dashed #cbd5d5; font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #596770; }
+    .sp-stamp { display: inline-block; margin-top: 4px; padding: 1px 8px; border: 1.5px solid currentColor; border-radius: 2px; font-size: 10px; font-weight: 900; letter-spacing: 0.12em; }
+    .sp-stamp-paid { color: #047857; }
+    .sp-stamp-due { color: #b91c1c; }
+    .sp-stamp-advance { color: #1d4ed8; }
+    .sp-words { margin-top: 6px; padding: 4px 7px; border: 1px solid #cbd5d5; background: #f8fafb; font-size: 11px; }
+    .sp-item-meta { margin-top: 1px; font-size: 9px; font-weight: 400; color: #64748b; }
     .sp-qr { text-align: center; margin: 10px 0 2px; }
     .sp-qr img { width: 75px; height: 75px; display: inline-block; border: 0; border-radius: 0; padding: 0; margin-left: 50px; margin-bottom: 10px; }
     .sp-cont-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; border-bottom: 2px solid var(--v-accent, #087d6c); padding-bottom: 5px; }
@@ -256,6 +265,8 @@ export function planInvoicePages(
     .sp-page-foot { position: absolute; left: 34px; right: 34px; bottom: 10px; display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid #cbd5d5; padding-top: 3px; font-size: 9.5px; color: #596770; }
     .sp-watermark { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; overflow: hidden; z-index: 0; }
     .sp-watermark span { font-size: 42px; font-weight: 900; color: #0f172a; letter-spacing: 0.1em; white-space: nowrap; }
+    .sp-cancelled { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; overflow: hidden; z-index: 0; }
+    .sp-cancelled span { font-size: 64px; font-weight: 900; color: #dc2626; opacity: 0.18; border: 6px solid #dc2626; border-radius: 10px; padding: 8px 28px; letter-spacing: 0.14em; white-space: nowrap; transform: rotate(-20deg); }
     .voucher-print-scaler { margin: 0 auto; }
     .voucher-measure { position: fixed; left: -12000px; top: 0; width: 1200px; visibility: hidden; pointer-events: none; z-index: -1; }
     .voucher-measure .sp-invoice { min-height: 0 !important; }
@@ -368,26 +379,34 @@ export function planInvoicePages(
             }
 
             <!-- Download Dropdown -->
-            <div class="relative group">
+            <div class="relative">
               <button
-                class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-2xs cursor-pointer"
+                (click)="toggleDownload()"
+                [disabled]="exporting()"
+                class="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-2xs cursor-pointer"
               >
-                <mat-icon class="text-xs">download</mat-icon> Download
+                @if (exporting()) {
+                  <span class="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white"></span>
+                  {{ prefs.txt('তৈরি হচ্ছে…', 'Preparing…') }}
+                } @else {
+                  <mat-icon class="text-xs">download</mat-icon> {{ prefs.txt('ডাউনলোড', 'Download') }}
+                }
               </button>
-              <div class="absolute right-0 top-full mt-1 w-44 bg-white border border-slate-200 rounded-xl shadow-xl hidden group-hover:block group-focus-within:block z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
-                <button (click)="exportAs('html')" class="w-full px-4 py-2 text-left hover:bg-blue-50 text-slate-700 flex items-center gap-2">
-                  <mat-icon class="text-amber-600 text-sm">code</mat-icon> Save as HTML
-                </button>
-                <button (click)="exportAs('pdf')" class="w-full px-4 py-2 text-left hover:bg-blue-50 text-slate-700 flex items-center gap-2 border-t border-slate-100">
-                  <mat-icon class="text-rose-500 text-sm">picture_as_pdf</mat-icon> Save as PDF
-                </button>
-                <button (click)="exportAs('jpg')" class="w-full px-4 py-2 text-left hover:bg-blue-50 text-slate-700 flex items-center gap-2 border-t border-slate-100">
-                  <mat-icon class="text-teal-500 text-sm">image</mat-icon> Save as JPG
-                </button>
-                <button (click)="exportAs('png')" class="w-full px-4 py-2 text-left hover:bg-blue-50 text-slate-700 flex items-center gap-2 border-t border-slate-100">
-                  <mat-icon class="text-indigo-500 text-sm">photo</mat-icon> Save as PNG
-                </button>
-              </div>
+              @if (downloadOpen()) {
+                <div class="fixed inset-0 z-40" (click)="downloadOpen.set(false)"></div>
+                <div class="absolute right-0 top-full mt-1 w-52 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                  <p class="px-3 py-1.5 text-[9.5px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">{{ prefs.txt('ফাইল ফরম্যাট', 'File format') }}</p>
+                  @for (option of downloadOptions; track option.kind) {
+                    <button (click)="pickDownload(option.kind)" class="w-full px-4 py-2 text-left hover:bg-blue-50 text-slate-700 flex items-center gap-2 border-t border-slate-100 first:border-t-0">
+                      <mat-icon class="text-sm" [class]="option.iconClass">{{ option.icon }}</mat-icon>
+                      <span class="flex-1">
+                        <span class="block font-bold">{{ prefs.txt(option.bn, option.en) }}</span>
+                        <span class="block text-[9.5px] text-slate-400">{{ prefs.txt(option.hintBn, option.hintEn) }}</span>
+                      </span>
+                    </button>
+                  }
+                </div>
+              }
             </div>
 
             <app-share-invoice
@@ -413,9 +432,10 @@ export function planInvoicePages(
 
             <button
               (click)="onPrint()"
-              class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-2xs cursor-pointer"
+              [disabled]="exporting()"
+              class="bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shadow-2xs cursor-pointer"
             >
-              <mat-icon class="text-xs">print</mat-icon> Print
+              <mat-icon class="text-xs">print</mat-icon> {{ prefs.txt('প্রিন্ট', 'Print') }}
             </button>
           </div>
 
@@ -426,12 +446,15 @@ export function planInvoicePages(
         <div class="voucher-scroll flex-1 overflow-y-auto p-4 sm:p-5">
 
           <!-- One invoice body shared by every printed page and the hidden measurer. -->
-          <ng-template #invoiceTpl let-page>
+          <ng-template #invoiceTpl let-page let-copyLabel="copyLabel">
             <div class="sp-invoice printable-area" [style.width.px]="sheet().designW" [style.min-height.px]="sheet().designH" [style.padding.px]="sheet().margin" [style.transform]="'scale(' + pageScale(page) + ')'" [style.--v-accent]="settings().accentColor" [style.font-family]="fontStack()">
+              @if (copyLabel) {
+                <div class="sp-copy-tag">{{ copyLabel }}</div>
+              }
               @if (page.continuation) {
                 <div class="sp-cont-head">
                   <div>
-                    <h1>{{ settings().businessNamePart1 }} {{ settings().businessNamePart2 }}</h1>
+                    <h1 [style.color]="settings().businessColor1">{{ settings().businessNamePart1 }} <span [style.color]="settings().businessColor2">{{ settings().businessNamePart2 }}</span></h1>
                     <p class="sp-muted">{{ prefs.txt('একই ইনভয়েসের পরবর্তী পৃষ্ঠা', 'Continuation of the same invoice') }}</p>
                   </div>
                   <div class="sp-cont-meta">
@@ -449,17 +472,36 @@ export function planInvoicePages(
                         <img src="assets/sm-logo.jpg" alt="SM logo" />
                       </div>
                     }
-                    <h1>{{ settings().businessNamePart1 }} {{ settings().businessNamePart2 }}</h1>
+                    <h1 [style.color]="settings().businessColor1">{{ settings().businessNamePart1 }} <span [style.color]="settings().businessColor2">{{ settings().businessNamePart2 }}</span></h1>
                   </div>
                   <p class="sp-muted">{{ settings().address }}</p>
-                  @if (settings().mobile) {
-                    <p class="sp-muted">Mobile: {{ settings().mobile }}</p>
+                  @if (settings().mobile || settings().email) {
+                    <p class="sp-muted">
+                      @if (settings().mobile) { Mobile: {{ settings().mobile }} }
+                      @if (settings().mobile && settings().email) { · }
+                      @if (settings().email) { Email: {{ settings().email }} }
+                    </p>
+                  }
+                  @if (settings().vatRegNo || settings().tradeLicenseNo) {
+                    <p class="sp-muted">
+                      @if (settings().vatRegNo) { VAT / BIN: {{ settings().vatRegNo }} }
+                      @if (settings().vatRegNo && settings().tradeLicenseNo) { · }
+                      @if (settings().tradeLicenseNo) { Trade License: {{ settings().tradeLicenseNo }} }
+                    </p>
                   }
                 </div>
                 <div class="sp-right">
                   <h2>SALES &amp; PAYMENT INVOICE</h2>
                   <p>Invoice No: {{ currentSale().invoice }}</p>
                   <p>Date: <span>{{ formatVoucherDate(currentSale().date) }}</span></p>
+                  @if (settings().showPaymentStatus && !cancelled()) {
+                    <span
+                      class="sp-stamp"
+                      [class.sp-stamp-paid]="paymentStamp().tone === 'paid'"
+                      [class.sp-stamp-due]="paymentStamp().tone === 'due'"
+                      [class.sp-stamp-advance]="paymentStamp().tone === 'advance'"
+                    >{{ paymentStamp().text }}</span>
+                  }
                 </div>
               </div>
 
@@ -501,7 +543,11 @@ export function planInvoicePages(
                   @for (item of page.items; track item.id; let idx = $index) {
                     <tr>
                       <td>{{ page.firstIndex + idx + 1 }}</td>
-                      <td>{{ itemName(item) }}</td>
+                      <td>{{ itemName(item) }}
+                        @if (settings().showItemCode && itemMeta(item)) {
+                          <div class="sp-item-meta">{{ itemMeta(item) }}</div>
+                        }
+                      </td>
                       <td class="sp-num">{{ item.quantity }} {{ item.unit || 'pcs' }}
                         @if (lineBaseQtyNote(item)) {
                           <div style="font-size:9px;color:#64748b">{{ lineBaseQtyNote(item) }}</div>
@@ -721,6 +767,10 @@ export function planInvoicePages(
                 }
               </div>
 
+              @if (settings().showAmountInWords) {
+                <div class="sp-words"><b>{{ prefs.txt('কথায়', 'In Words') }}:</b> {{ inWords() }}</div>
+              }
+
               <div class="sp-closing">
                 @if (settings().showGreeting && settings().greetingText) {
                   <p class="sp-greeting">{{ settings().greetingText }}</p>
@@ -752,12 +802,14 @@ export function planInvoicePages(
               }
               }
 
-              @if (page.pageCount > 1) {
-                <div class="sp-page-foot" [style.left.px]="sheet().margin" [style.right.px]="sheet().margin">
-                  <span>Invoice No: {{ currentSale().invoice }}</span>
-                  <span>{{ prefs.txt('পৃষ্ঠা', 'Page') }} {{ page.pageNo }} / {{ page.pageCount }}</span>
-                </div>
+              @if (cancelled()) {
+                <div class="sp-cancelled"><span>{{ prefs.txt('বাতিল', 'CANCELLED') }}</span></div>
               }
+
+              <div class="sp-page-foot" [style.left.px]="sheet().margin" [style.right.px]="sheet().margin">
+                <span>Invoice No: {{ currentSale().invoice }}</span>
+                <span>{{ prefs.txt('পৃষ্ঠা', 'Page') }} {{ page.pageNo }} / {{ page.pageCount }}</span>
+              </div>
             </div>
           </ng-template>
 
@@ -787,7 +839,7 @@ export function planInvoicePages(
                       [style.width.px]="sheet().designW * pageScale(page)"
                       [style.height.px]="pageHeight(page) * pageScale(page)"
                     >
-                      <ng-container *ngTemplateOutlet="invoiceTpl; context: { $implicit: page }"></ng-container>
+                      <ng-container *ngTemplateOutlet="invoiceTpl; context: { $implicit: page, copyLabel: copyLabel($index) }"></ng-container>
                     </div>
                   </div>
                 }
@@ -798,10 +850,10 @@ export function planInvoicePages(
           <!-- Off-screen twin used to measure wrapped rows and each page's overhead. -->
           <div class="voucher-measure" aria-hidden="true">
             <div class="voucher-measure-full">
-              <ng-container *ngTemplateOutlet="invoiceTpl; context: { $implicit: measurePage() }"></ng-container>
+              <ng-container *ngTemplateOutlet="invoiceTpl; context: { $implicit: measurePage(), copyLabel: copyLabel(0) }"></ng-container>
             </div>
             <div class="voucher-measure-cont">
-              <ng-container *ngTemplateOutlet="invoiceTpl; context: { $implicit: continuationMeasurePage() }"></ng-container>
+              <ng-container *ngTemplateOutlet="invoiceTpl; context: { $implicit: continuationMeasurePage(), copyLabel: copyLabel(0) }"></ng-container>
             </div>
           </div>
 
@@ -834,6 +886,15 @@ export class InvoiceModal implements OnInit, AfterViewChecked, OnDestroy {
   readonly settings = this.dataService.voucherSettings;
 
   isSettingsOpen = signal<boolean>(false);
+  downloadOpen = signal<boolean>(false);
+  exporting = signal<boolean>(false);
+
+  readonly downloadOptions: { kind: 'pdf' | 'jpg' | 'png' | 'html'; icon: string; iconClass: string; bn: string; en: string; hintBn: string; hintEn: string }[] = [
+    { kind: 'pdf', icon: 'picture_as_pdf', iconClass: 'text-rose-500', bn: 'PDF ডকুমেন্ট', en: 'PDF document', hintBn: 'প্রিন্ট-রেডি, সবচেয়ে ভালো', hintEn: 'Print-ready, best quality' },
+    { kind: 'jpg', icon: 'image', iconClass: 'text-teal-500', bn: 'JPG ছবি', en: 'JPG image', hintBn: 'হোয়াটসঅ্যাপে পাঠানোর জন্য', hintEn: 'For sending on WhatsApp' },
+    { kind: 'png', icon: 'photo', iconClass: 'text-indigo-500', bn: 'PNG ছবি', en: 'PNG image', hintBn: 'সবচেয়ে পরিষ্কার ছবি', hintEn: 'Crisp lossless image' },
+    { kind: 'html', icon: 'code', iconClass: 'text-amber-600', bn: 'HTML ফাইল', en: 'HTML file', hintBn: 'ব্রাউজারে খোলার জন্য', hintEn: 'Opens in any browser' }
+  ];
 
   readonly sheet = computed(() => resolveVoucherSheet(this.settings()));
   readonly copies = computed(() => Array.from({ length: this.sheet().copies }, (_, index) => index));
@@ -1050,14 +1111,36 @@ export class InvoiceModal implements OnInit, AfterViewChecked, OnDestroy {
     return saleItemDisplayName(item, this.dataService.products());
   }
 
+  /** Item code, brand and serial printed small under the description. */
+  itemMeta(item: SaleItem): string {
+    const product = findProductForLine(this.dataService.products(), item);
+    const parts: string[] = [];
+    if (product?.code) parts.push(`${this.prefs.txt('কোড', 'Code')}: ${product.code}`);
+    if (product?.brand) parts.push(`${this.prefs.txt('ব্র্যান্ড', 'Brand')}: ${product.brand}`);
+    if (item.serialNumber) parts.push(`S/N: ${item.serialNumber}`);
+    return parts.join(' · ');
+  }
+
+  /** Customer / Office / Accounts / Transport copy name for multi-copy sheets. */
+  copyLabel(index: number): string {
+    if (!this.settings().showCopyLabels) return '';
+    const labels = [
+      this.prefs.txt('গ্রাহক কপি', 'Customer Copy'),
+      this.prefs.txt('অফিস কপি', 'Office Copy'),
+      this.prefs.txt('হিসাব কপি', 'Accounts Copy'),
+      this.prefs.txt('পরিবহন কপি', 'Transport Copy')
+    ];
+    return labels[Math.min(Math.max(index, 0), labels.length - 1)];
+  }
+
   lineDiscount(item: SaleItem): number {
     return Math.max(0, round2((item.quantity || 0) * (item.salesPrice || 0) - (item.total || 0)));
   }
 
-  /** "= ২৪ পিস" under a line sold in an extra unit (১ ডজন = ১২ পিস). */
+  /** "= ২৪ পিস" under a line sold in an extra unit (১ ডজন = ১২ পিস, ১ কেজি = ১০০০ গ্রাম). */
   lineBaseQtyNote(item: SaleItem): string {
     const factor = Number(item.unitFactor) || 1;
-    if (factor <= 1) return '';
+    if (factor === 1) return '';
     const product = this.dataService.products().find(p =>
       item.productId != null ? p.id === item.productId : p.name === item.productName);
     const base = product?.unit || '';
@@ -1150,6 +1233,16 @@ export class InvoiceModal implements OnInit, AfterViewChecked, OnDestroy {
     };
   });
 
+  /** PAID / DUE / ADVANCE stamp from the final voucher balance. */
+  readonly paymentStamp = computed(() => {
+    const balance = this.salesPaymentSummary().finalBalance;
+    if (balance > 0.004) return { text: this.prefs.txt('বাকি', 'DUE'), tone: 'due' as const };
+    if (balance < -0.004) return { text: this.prefs.txt('অগ্রিম', 'ADVANCE'), tone: 'advance' as const };
+    return { text: this.prefs.txt('পরিশোধিত', 'PAID'), tone: 'paid' as const };
+  });
+
+  readonly cancelled = computed(() => this.currentSale().status === 'Cancelled');
+
   ngOnInit() {
     this.currentSale.set({ ...this.sale() });
   }
@@ -1192,7 +1285,7 @@ export class InvoiceModal implements OnInit, AfterViewChecked, OnDestroy {
   });
 
   readonly inWords = computed(() => {
-    return this.convertNumberToWords(this.calculatedNetTotal());
+    return takaInWords(this.calculatedNetTotal(), this.prefs.language());
   });
 
   readonly shareMessage = computed(() => {
@@ -1219,6 +1312,16 @@ export class InvoiceModal implements OnInit, AfterViewChecked, OnDestroy {
     this.runVoucherJob(printVoucherSheet, 'প্রিন্ট করা যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।', 'Print failed');
   }
 
+  toggleDownload() {
+    if (this.exporting()) return;
+    this.downloadOpen.update(open => !open);
+  }
+
+  pickDownload(kind: 'pdf' | 'jpg' | 'png' | 'html') {
+    this.downloadOpen.set(false);
+    this.exportAs(kind);
+  }
+
   exportAs(kind: 'html' | 'pdf' | 'jpg' | 'png') {
     const runner = { html: downloadVoucherHtml, pdf: downloadVoucherPdf, jpg: downloadVoucherJpg, png: downloadVoucherPng }[kind];
     this.runVoucherJob(runner, `${kind.toUpperCase()} ফাইল তৈরি করা যায়নি।`, `${kind.toUpperCase()} export failed`);
@@ -1229,61 +1332,13 @@ export class InvoiceModal implements OnInit, AfterViewChecked, OnDestroy {
     const paperEls = Array.from(host.querySelectorAll('.voucher-print-paper')) as HTMLElement[];
     if (!paperEls.length) return;
     const invoice = this.currentSale().invoice;
+    this.exporting.set(true);
     runner({ paperEl: paperEls[0], paperEls, sheet: this.sheet(), fileName: `Invoice_${invoice}`, title: `Sales Invoice ${invoice}` })
       .catch(err => {
         console.error(messageEn, err);
         this.notify.error(this.prefs.txt(messageBn, messageEn), messageEn);
-      });
-  }
-
-  private convertNumberToWords(amount: number): string {
-    if (amount <= 0) return 'Zero Taka Only';
-    const units = [
-      '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
-      'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'
-    ];
-    const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-
-    const numToWords = (n: number): string => {
-      let str = '';
-      if (n >= 10000000) {
-        str += numToWords(Math.floor(n / 10000000)) + ' Crore ';
-        n %= 10000000;
-      }
-      if (n >= 100000) {
-        str += numToWords(Math.floor(n / 100000)) + ' Lakh ';
-        n %= 100000;
-      }
-      if (n >= 1000) {
-        str += numToWords(Math.floor(n / 1000)) + ' Thousand ';
-        n %= 1000;
-      }
-      if (n >= 100) {
-        str += numToWords(Math.floor(n / 100)) + ' Hundred ';
-        n %= 100;
-      }
-      if (n > 0) {
-        if (str !== '') str += 'And ';
-        if (n < 20) {
-          str += units[n] + ' ';
-        } else {
-          str += tens[Math.floor(n / 10)];
-          if (n % 10 > 0) str += ' ' + units[n % 10];
-          str += ' ';
-        }
-      }
-      return str.trim();
-    };
-
-    const intPart = Math.floor(amount);
-    const fracPart = Math.round((amount - intPart) * 100);
-
-    let result = numToWords(intPart) + ' Taka';
-    if (fracPart > 0) {
-      result += ' And ' + numToWords(fracPart) + ' Paisa';
-    }
-    result += ' Only';
-    return result.replace(/\s+/g, ' ');
+      })
+      .finally(() => this.exporting.set(false));
   }
 }
 

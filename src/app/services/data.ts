@@ -33,7 +33,10 @@ export interface ProductVariant {
 export interface ProductUnit {
   /** Display name of the extra selling unit, e.g. কেজি. */
   name: string;
-  /** How many base units one of this unit holds (1 কেজি = 1000 গ্রাম → 1000). */
+  /**
+   * How many base units one of this unit holds (1 কেজি = 1000 গ্রাম → 1000).
+   * 1 means the unit shares the stock count one-for-one (গজ/কেজি/পিস একই স্টক).
+   */
   factor: number;
   /** Price per this unit; absent derives from the base sales price × factor. */
   price?: number;
@@ -264,6 +267,9 @@ const partyRound = (value: unknown) => Math.round((Number(value) || 0) * 100) / 
 /** A fresh shop's first bill is Sale-1001, not Sale-0001. */
 const SALE_SERIAL_START = 1000;
 
+/** Purchase vouchers keep their own book, starting at PUR-3001. */
+const PURCHASE_SERIAL_START = 3000;
+
 /** Roles of a party. Legacy records only carry the single `type` field. */
 export function partyRoles(party: Party): PartyType[] {
   const roles = (Array.isArray(party.roles) ? party.roles : []).filter(Boolean) as PartyType[];
@@ -440,6 +446,9 @@ export interface VoucherSettings {
   address: string;
   mobile: string;
   email: string;
+  /** Printed under the header when filled (commercial invoice identification). */
+  vatRegNo: string;
+  tradeLicenseNo: string;
   soldBy: string;
   // Section show/hide toggles — every voucher honours these.
   showLogo: boolean;
@@ -460,6 +469,14 @@ export interface VoucherSettings {
   showTerms: boolean;
   showSummary: boolean;
   showSignatureImage: boolean;
+  /** PAID / DUE stamp beside the invoice heading. */
+  showPaymentStatus: boolean;
+  /** Item code, serial and brand under the product description. */
+  showItemCode: boolean;
+  /** Customer / Office / Accounts copy label on multi-copy sheets. */
+  showCopyLabels: boolean;
+  /** Amount in words under the bill total. */
+  showAmountInWords: boolean;
   accentColor: string;
   greetingText: string;
   notesText: string;
@@ -678,6 +695,36 @@ export interface BatteryVoucher {
   partyPosted?: boolean;
 }
 
+/** One purchase voucher the fund paid off, oldest purchases first. */
+export interface BatteryFundAllocation {
+  voucherId: number;
+  voucherNo: string;
+  amount: number;
+}
+
+/**
+ * Money kept inside the old-battery stock: every purchase that is not paid yet
+ * makes up the fund, and a transfer sends part of it to the seller's ledger.
+ * `recordPayment` posts the party side (due first, then advance); the wallet row
+ * and the linked receipt are reversed together when the transfer is removed.
+ */
+export interface BatteryFundTransfer {
+  id: number;
+  transferNo: string;
+  date: string;
+  partyId: number;
+  partyName: string;
+  amount: number;
+  mode: LedgerPayment['mode'];
+  accountId?: number;
+  walletTxnId?: number;
+  paymentId?: number;
+  allocations: BatteryFundAllocation[];
+  note: string;
+  createdAt: string;
+  createdBy?: string;
+}
+
 export interface BatterySummary {
   purchaseTotal: number;
   saleTotal: number;
@@ -689,6 +736,8 @@ export interface BatterySummary {
   stockPcs: number;
   stockValue: number;
   avgCostPerKg: number;
+  /** Sales whose kilogram weight was never bought, so no purchase cost can be attached. */
+  incompleteSales: number;
 }
 
 /** One dated stock movement, valued at its own purchase rate (running balance per kind). */
@@ -899,6 +948,8 @@ export interface LedgerPayment {
   date: string;
   note: string;
   createdAt: string;
+  /** Set when a battery-fund transfer created this receipt; only that transfer may reverse it. */
+  batteryFundTransferId?: number;
 }
 
 export interface SupplierReturnItem {
@@ -1354,6 +1405,8 @@ export class DataService {
   readonly damageRecords = signal<DamageRecord[]>([]);
 
   readonly batteryVouchers = signal<BatteryVoucher[]>([]);
+
+  readonly batteryFundTransfers = signal<BatteryFundTransfer[]>([]);
 
   readonly warehouses = signal<string[]>(['SM Warehouse']);
 
@@ -2272,7 +2325,23 @@ export class DataService {
   }
 
   nextPurchaseInvoice(): string {
-    return this.nextDocNo('PUR', this.purchases().map(p => p.invoice), 0);
+    return `PUR-${this.nextPurchaseSerial()}`;
+  }
+
+  /**
+   * Purchase numbers restart at PUR-3001 and follow only that four-digit book.
+   * The cloud serial blocks drift ahead and older imports used five-digit
+   * numbers, so both are ignored; an already used number is skipped.
+   */
+  private nextPurchaseSerial(): number {
+    const used = new Set(this.purchases().map(p => (p.invoice || '').trim().toUpperCase()));
+    let next = PURCHASE_SERIAL_START + 1;
+    for (const purchase of this.purchases()) {
+      const match = /^PUR-(\d{4})$/.exec((purchase.invoice || '').trim());
+      if (match) next = Math.max(next, Number(match[1]) + 1);
+    }
+    while (used.has(`PUR-${next}`)) next++;
+    return next;
   }
 
   nextSupplierReturnNo(): string {
@@ -3233,6 +3302,7 @@ export class DataService {
       { key: 'sm_online_requests_v1', signal: this.onlineRequests },
       { key: 'sm_damage_records_v1', signal: this.damageRecords },
       { key: 'sm_battery_vouchers_v1', signal: this.batteryVouchers },
+      { key: 'sm_battery_fund_transfers_v1', signal: this.batteryFundTransfers },
       { key: 'sm_warehouses_v1', signal: this.warehouses },
       { key: 'sm_recycle_v1', signal: this.recycleBin },
     ];
@@ -3326,6 +3396,7 @@ export class DataService {
   private saveWarrantyStock() { this.writeStorage('sm_warranty_stock_v1', this.warrantyStockMovements()); }
   private saveSupplierReturns() { this.writeStorage('sm_supplier_returns_v1', this.supplierReturns()); }
   private saveCashClosings() { this.writeStorage('sm_cash_closings_v1', this.cashClosings()); }
+  private saveBatteryFundTransfers() { this.writeStorage('sm_battery_fund_transfers_v1', this.batteryFundTransfers()); }
 
   // ------------------------------------------------------------------
   // Feature modules: credit notes, advances, quotations, installments,
@@ -3383,7 +3454,7 @@ export class DataService {
   }
 
   peekPurchaseInvoice(): string {
-    return this.peekDocNo('PUR', this.purchases().map(p => p.invoice), 0);
+    return this.nextPurchaseInvoice();
   }
 
   private localMax(start: number, existing: (string | undefined)[]): number {
@@ -3886,16 +3957,168 @@ export class DataService {
     return this.peekDocNo(this.batteryPrefix(type), this.batteryVouchers().filter(v => v.type === type).map(v => v.voucherNo), 0);
   }
 
+  /**
+   * Battery stock is costed lot by lot: each sale takes the oldest bought
+   * kilograms first, so it carries the purchase cost it actually consumed.
+   * Vouchers are read in date/creation order; a sale running past the bought
+   * lots has an incomplete cost basis and must not read as pure profit.
+   */
+  private batteryLotCache?: {
+    list: BatteryVoucher[];
+    sales: Map<number, { cost: number; missing: boolean }>;
+    remaining: Map<string, { qty: number; value: number }>;
+  };
+
+  private batteryLotBook() {
+    const list = this.batteryVouchers();
+    if (this.batteryLotCache && this.batteryLotCache.list === list) return this.batteryLotCache;
+    const lots = new Map<string, { qty: number; rate: number }[]>();
+    const alias = new Map<string, string>();
+    const bucket = (key: string) => {
+      let rows = lots.get(key);
+      if (!rows) {
+        rows = [];
+        lots.set(key, rows);
+      }
+      return rows;
+    };
+    // Legacy lines carry only a localized label; remember the catalog key they map to.
+    const keyOf = (kindKey: string | undefined, label: string | undefined) => {
+      if (kindKey) {
+        if (label && label !== kindKey) alias.set(label, kindKey);
+        return kindKey;
+      }
+      const text = (label || 'other').trim();
+      return alias.get(text) || text;
+    };
+    const consume = (key: string, qty: number) => {
+      let need = qty, cost = 0;
+      for (const lot of bucket(key)) {
+        if (need <= 0) break;
+        const take = Math.min(need, lot.qty);
+        cost += take * lot.rate;
+        lot.qty -= take;
+        need -= take;
+      }
+      return { cost, short: need > 1e-9 };
+    };
+
+    const sales = new Map<number, { cost: number; missing: boolean }>();
+    // The list is newest-first, so an identical date and timestamp means the later
+    // index is the older voucher — a same-day purchase must be costed before the sale.
+    const sorted = list
+      .map((voucher, index) => ({ voucher, index }))
+      .sort((a, b) =>
+        (a.voucher.date || '').localeCompare(b.voucher.date || '')
+        || (a.voucher.createdAt || '').localeCompare(b.voucher.createdAt || '')
+        || b.index - a.index)
+      .map(entry => entry.voucher);
+    for (const voucher of sorted) {
+      if (voucher.type === 'purchase') {
+        for (const line of voucher.lines ?? []) {
+          const qty = Number(line.kg) || 0;
+          if (qty <= 0) continue;
+          bucket(keyOf(line.kindKey, line.kind)).push({ qty, rate: Number(line.rate) || 0 });
+        }
+        continue;
+      }
+      if (voucher.type !== 'sale') continue;
+      let cost = 0, missing = false;
+      for (const line of voucher.lines ?? []) {
+        const qty = Number(line.kg) || 0;
+        if (qty <= 0) continue;
+        const taken = consume(keyOf(line.kindKey, line.kind), qty);
+        cost += taken.cost;
+        if (taken.short) missing = true;
+      }
+      sales.set(voucher.id, { cost: this.roundMoney(cost), missing });
+    }
+
+    const remaining = new Map<string, { qty: number; value: number }>();
+    for (const [key, rows] of lots) {
+      let qty = 0, value = 0;
+      for (const lot of rows) {
+        qty += lot.qty;
+        value += lot.qty * lot.rate;
+      }
+      remaining.set(key, { qty, value: this.roundMoney(value) });
+    }
+    for (const [label, key] of alias) {
+      const entry = remaining.get(key);
+      if (entry) remaining.set(label, entry);
+    }
+
+    this.batteryLotCache = { list, sales, remaining };
+    return this.batteryLotCache;
+  }
+
+  /** Cost of unsaved sale lines at the remaining lot cost of each kind (the sale form's estimate). */
+  batteryLinesCost(lines: BatteryLine[] | undefined): number {
+    return this.batteryLinesCostDetail(lines).cost;
+  }
+
+  batteryLinesCostIncomplete(lines: BatteryLine[] | undefined): boolean {
+    return this.batteryLinesCostDetail(lines).missing;
+  }
+
+  private batteryLinesCostDetail(lines: BatteryLine[] | undefined): { cost: number; missing: boolean } {
+    const remaining = this.batteryLotBook().remaining;
+    let cost = 0, missing = false;
+    for (const line of lines ?? []) {
+      const qty = Number(line.kg) || 0;
+      if (qty <= 0) continue;
+      const entry = remaining.get(line.kindKey || '')
+        ?? remaining.get((line.kind || '').trim());
+      if (!entry || entry.qty <= 0) {
+        missing = true;
+        continue;
+      }
+      const take = Math.min(qty, entry.qty);
+      cost += take * (entry.value / entry.qty);
+      // Everything past the remaining lots has no purchase cost behind it.
+      if (take < qty - 1e-9) missing = true;
+    }
+    return { cost: this.roundMoney(cost), missing };
+  }
+
+  /** Sale cost basis: the entered lot cost, else the lots the sold kilograms came from. */
+  batteryVoucherCost(voucher: BatteryVoucher): number {
+    const entered = Number(voucher.cost) || 0;
+    if (entered > 0) return this.roundMoney(entered);
+    const basis = this.batteryLotBook().sales.get(voucher.id);
+    return basis ? basis.cost : this.batteryLinesCost(voucher.lines);
+  }
+
+  /** True when a sale has no entered cost and its kilograms were never bought. */
+  batteryVoucherCostIncomplete(voucher: BatteryVoucher): boolean {
+    if (voucher.type !== 'sale') return false;
+    if ((Number(voucher.cost) || 0) > 0) return false;
+    const sold = (voucher.lines ?? []).some(line => (Number(line.kg) || 0) > 0);
+    if (!sold) return (Number(voucher.total) || 0) > 0;
+    const basis = this.batteryLotBook().sales.get(voucher.id);
+    return basis ? basis.missing : this.batteryLinesCostIncomplete(voucher.lines);
+  }
+
   /** Profit recognised by a single voucher: sale margin plus exchange fee. */
   batteryVoucherProfit(voucher: BatteryVoucher): number {
-    if (voucher.type === 'sale') return this.roundMoney((voucher.total || 0) - (voucher.cost || 0));
+    if (voucher.type === 'sale') {
+      // Without a purchase cost the revenue is not a profit — the UI says "ক্রয়খরচ অসম্পূর্ণ".
+      if (this.batteryVoucherCostIncomplete(voucher)) return 0;
+      return this.roundMoney((voucher.total || 0) - this.batteryVoucherCost(voucher));
+    }
     if (voucher.type === 'exchange') return this.roundMoney(voucher.fee || voucher.total || 0);
     return 0;
   }
 
+  /** Correct a saved sale's lot cost without touching stock, purchases or postings. */
+  setBatteryVoucherCost(id: number, cost: number) {
+    this.batteryVouchers.update(list =>
+      list.map(v => v.id === id ? { ...v, cost: this.roundMoney(cost) } : v));
+  }
+
   batterySummary(): BatterySummary {
     const list = this.batteryVouchers();
-    let purchaseTotal = 0, saleTotal = 0, saleCost = 0, exchangeFee = 0, profit = 0;
+    let purchaseTotal = 0, saleTotal = 0, saleCost = 0, exchangeFee = 0, profit = 0, incompleteSales = 0;
     // Kg and pcs never share a column: a piece is not a weight.
     let stockKg = 0, stockPcs = 0, purchasedKg = 0, purchasedKgValue = 0;
     const addStock = (unit: BatteryUnit | undefined, delta: number, rate = 0) => {
@@ -3921,7 +4144,8 @@ export class DataService {
         }
       } else if (v.type === 'sale') {
         saleTotal += v.total || 0;
-        saleCost += v.cost || 0;
+        if (this.batteryVoucherCostIncomplete(v)) incompleteSales++;
+        else saleCost += this.batteryVoucherCost(v);
         if (!(v.lines ?? []).length && (v.totalKg || 0) > 0) addStock('kg', -(v.totalKg || 0));
         for (const l of v.lines ?? []) {
           const qty = Number(l.kg) || 0;
@@ -3945,7 +4169,8 @@ export class DataService {
       stockKg: Math.round(stockKg * 100) / 100,
       stockPcs: Math.round(stockPcs * 100) / 100,
       stockValue: this.roundMoney(stockValue),
-      avgCostPerKg: Math.round(avgCostPerKg * 100) / 100
+      avgCostPerKg: Math.round(avgCostPerKg * 100) / 100,
+      incompleteSales
     };
   }
 
@@ -3966,6 +4191,16 @@ export class DataService {
   updateBatteryVoucher(id: number, input: Omit<BatteryVoucher, 'id' | 'voucherNo' | 'shareKey' | 'walletTxnIds'>) {
     const previous = this.batteryVouchers().find(v => v.id === id);
     if (!previous) return;
+    if (this.batteryFundAllocatedFor(id) > 0) {
+      this.notify.error(
+        this.prefs.txt(
+          `${previous.voucherNo} এর কিছু টাকা ব্যাটারি ফান্ড থেকে পরিশোধ হয়েছে — আগে সংশ্লিষ্ট ফান্ড ট্রান্সফারটি মুছুন, তারপর ভাউচারটি বদলান।`,
+          `Part of ${previous.voucherNo} was paid from the battery fund — delete that fund transfer first, then edit the voucher.`
+        ),
+        this.prefs.txt('ফান্ডে পরিশোধিত ভাউচার', 'Fund-settled voucher')
+      );
+      return;
+    }
     this.postBatteryWallet(previous, -1);
     if (previous.partyPosted) this.postBatteryParty(previous, -1);
     const record: BatteryVoucher = { ...input, id, voucherNo: previous.voucherNo, shareKey: previous.shareKey, walletTxnIds: [] };
@@ -3977,10 +4212,194 @@ export class DataService {
   deleteBatteryVoucher(id: number) {
     const previous = this.batteryVouchers().find(v => v.id === id);
     if (!previous) return;
+    if (this.batteryFundAllocatedFor(id) > 0) {
+      this.notify.error(
+        this.prefs.txt(
+          `${previous.voucherNo} এর কিছু টাকা ব্যাটারি ফান্ড থেকে পরিশোধ হয়েছে — আগে সংশ্লিষ্ট ফান্ড ট্রান্সফারটি মুছুন, তারপর ভাউচারটি মুছুন।`,
+          `Part of ${previous.voucherNo} was paid from the battery fund — delete that fund transfer first, then delete the voucher.`
+        ),
+        this.prefs.txt('ফান্ডে পরিশোধিত ভাউচার', 'Fund-settled voucher')
+      );
+      return;
+    }
     this.archive('sm_battery_vouchers_v1', 'ব্যাটারি ভাউচার', previous);
     this.postBatteryWallet(previous, -1);
     if (previous.partyPosted) this.postBatteryParty(previous, -1);
     this.batteryVouchers.update(list => list.filter(v => v.id !== id));
+  }
+
+  // ------------------------------------------------------------------
+  // Battery stock fund: the unpaid part of old-battery purchases, kept per
+  // party and paid out through the same wallet accounts as the vouchers.
+  // ------------------------------------------------------------------
+  private batteryPurchaseVouchers(): BatteryVoucher[] {
+    return this.batteryVouchers().filter(v => v.type === 'purchase' && v.source !== 'sale-adjustment');
+  }
+
+  /** Fund money already sent to a party, keyed by the purchase voucher it settled. */
+  batteryFundAllocationsByVoucher(): Map<number, number> {
+    const map = new Map<number, number>();
+    for (const transfer of this.batteryFundTransfers()) {
+      for (const line of transfer.allocations ?? []) {
+        map.set(line.voucherId, this.roundMoney((map.get(line.voucherId) || 0) + (Number(line.amount) || 0)));
+      }
+    }
+    return map;
+  }
+
+  batteryFundAllocatedFor(voucherId: number): number {
+    return this.batteryFundAllocationsByVoucher().get(voucherId) || 0;
+  }
+
+  /**
+   * Remaining fund per party: each unpaid purchase voucher's due, less the
+   * allocations already transferred. Sales trade-ins are settled on their
+   * invoice and never feed the fund.
+   */
+  batteryFundByParty(): Map<number, number> {
+    const allocated = this.batteryFundAllocationsByVoucher();
+    const map = new Map<number, number>();
+    for (const voucher of this.batteryPurchaseVouchers()) {
+      const party = this.partyForReference(voucher.partyId, voucher.partyName);
+      if (!party) continue;
+      const free = Math.max(0, (Number(voucher.due) || 0) - (allocated.get(voucher.id) || 0));
+      if (free <= 0) continue;
+      map.set(party.id, this.roundMoney((map.get(party.id) || 0) + free));
+    }
+    return map;
+  }
+
+  batteryFundAvailable(): number {
+    let total = 0;
+    for (const value of this.batteryFundByParty().values()) total += value;
+    return this.roundMoney(total);
+  }
+
+  batteryFundOfParty(partyId: number): number {
+    return this.batteryFundByParty().get(partyId) || 0;
+  }
+
+  nextBatteryFundTransferNo(): string {
+    return this.nextDocNo('BFT', this.batteryFundTransfers().map(t => t.transferNo));
+  }
+
+  /**
+   * Sends battery-fund money to a seller: a normal supplier receipt settles the
+   * purchase book (due first, the rest as advance), a wallet "Out" row records
+   * the cash, and the allocations remember which vouchers the fund paid.
+   */
+  transferBatteryFund(input: {
+    partyId: number;
+    amount: number;
+    mode: LedgerPayment['mode'];
+    date: string;
+    note: string;
+    createdBy?: string;
+  }): { ok: true; transfer: BatteryFundTransfer } | { ok: false; error: string } {
+    const party = this.parties().find(p => p.id === input.partyId);
+    if (!party || isWalkInCustomer(party.name)) {
+      return { ok: false, error: this.prefs.txt('পার্টি পাওয়া যায়নি।', 'The party was not found.') };
+    }
+    const amount = this.roundMoney(input.amount);
+    if (!(amount > 0)) {
+      return { ok: false, error: this.prefs.txt('টাকার পরিমাণ দিন।', 'Enter an amount.') };
+    }
+    const available = this.batteryFundOfParty(party.id);
+    if (amount > available + 0.005) {
+      return {
+        ok: false,
+        error: this.prefs.txt(
+          `${party.name} এর ব্যাটারি ফান্ডে মাত্র ${available.toFixed(2)} TK আছে।`,
+          `${party.name} has only ${available.toFixed(2)} TK in the battery fund.`
+        )
+      };
+    }
+    const account = this.walletAccounts().find(a => a.type === input.mode && a.status === 'Enabled')
+      ?? this.walletAccounts().find(a => a.type === input.mode);
+    if (!account) {
+      return { ok: false, error: this.prefs.txt('নির্বাচিত ওয়ালেট অ্যাকাউন্টটি পাওয়া যায়নি।', 'The selected wallet account was not found.') };
+    }
+
+    const allocations = this.allocateBatteryFund(party, amount);
+    const transfer: BatteryFundTransfer = {
+      id: this.newId(),
+      transferNo: this.nextBatteryFundTransferNo(),
+      date: input.date,
+      partyId: party.id,
+      partyName: party.name,
+      amount,
+      mode: input.mode,
+      accountId: account.id,
+      allocations,
+      note: input.note.trim(),
+      createdAt: new Date().toISOString(),
+      createdBy: input.createdBy
+    };
+    this.batteryFundTransfers.update(list => [transfer, ...list]);
+
+    const payment = this.recordPayment({
+      partyId: party.id,
+      partyName: party.name,
+      partyType: 'Supplier',
+      side: 'purchase',
+      amount,
+      discount: 0,
+      mode: input.mode,
+      date: input.date,
+      note: [`${transfer.transferNo} · ${this.prefs.txt('ব্যাটারি ফান্ড থেকে পরিশোধ', 'paid from battery fund')}`, input.note.trim()].filter(Boolean).join(' — ')
+    });
+    this.payments.update(list => list.map(p => p.id === payment.id ? { ...p, batteryFundTransferId: transfer.id } : p));
+    this.savePayments();
+
+    const txn = this.addWalletTransaction({
+      date: input.date,
+      direction: 'Out',
+      accountId: account.id,
+      amount,
+      party: party.name,
+      note: `${transfer.transferNo} · ${this.prefs.txt('ব্যাটারি ফান্ড', 'battery fund')} → ${party.name}`,
+      source: 'Battery',
+      refId: transfer.id
+    });
+
+    const saved: BatteryFundTransfer = { ...transfer, paymentId: payment.id, walletTxnId: txn.id };
+    this.batteryFundTransfers.update(list => list.map(t => t.id === transfer.id ? saved : t));
+    this.saveBatteryFundTransfers();
+    return { ok: true, transfer: saved };
+  }
+
+  /** Oldest unpaid purchase first, so the fund clears the earliest bill. */
+  private allocateBatteryFund(party: Party, amount: number): BatteryFundAllocation[] {
+    const allocated = this.batteryFundAllocationsByVoucher();
+    const rows = this.batteryPurchaseVouchers()
+      .filter(v => this.partyForReference(v.partyId, v.partyName)?.id === party.id)
+      .sort((a, b) =>
+        (a.date || '').localeCompare(b.date || '')
+        || (a.createdAt || '').localeCompare(b.createdAt || '')
+        || a.id - b.id);
+    const allocations: BatteryFundAllocation[] = [];
+    let left = amount;
+    for (const voucher of rows) {
+      if (left <= 0.005) break;
+      const free = this.roundMoney(Math.max(0, (Number(voucher.due) || 0) - (allocated.get(voucher.id) || 0)));
+      if (free <= 0) continue;
+      const take = this.roundMoney(Math.min(free, left));
+      allocations.push({ voucherId: voucher.id, voucherNo: voucher.voucherNo, amount: take });
+      left = this.roundMoney(left - take);
+    }
+    return allocations;
+  }
+
+  deleteBatteryFundTransfer(id: number) {
+    const transfer = this.batteryFundTransfers().find(t => t.id === id);
+    if (!transfer) return;
+    // The receipt and wallet row belong to this transfer; reversing them here
+    // restores the party due and the fund balance in one step.
+    this.forceDeletePayment(transfer.paymentId);
+    this.removeWalletTxn(transfer.walletTxnId);
+    this.archive('sm_battery_fund_transfers_v1', 'ব্যাটারি ফান্ড ট্রান্সফার', transfer);
+    this.batteryFundTransfers.update(list => list.filter(t => t.id !== id));
+    this.saveBatteryFundTransfers();
   }
 
   /**
@@ -4060,25 +4479,53 @@ export class DataService {
    * Rows are chronological so `balanceQty/balanceValue` are the running book.
    */
   batteryStockLedger(): BatteryStockRow[] {
-    const sorted = [...this.batteryVouchers()].sort((a, b) =>
-      (a.date || '').localeCompare(b.date || '') || (a.createdAt || '').localeCompare(b.createdAt || ''));
+    // Same ordering as the lot book: on an identical date and timestamp the
+    // higher list index is the older voucher (the list is newest-first).
+    const sorted = this.batteryVouchers()
+      .map((voucher, index) => ({ voucher, index }))
+      .sort((a, b) =>
+        (a.voucher.date || '').localeCompare(b.voucher.date || '')
+        || (a.voucher.createdAt || '').localeCompare(b.voucher.createdAt || '')
+        || b.index - a.index)
+      .map(entry => entry.voucher);
     const rows: BatteryStockRow[] = [];
-    // Every kind keeps its own book, so a balance is always per category.
-    const books = new Map<string, { qty: number; value: number }>();
-    const book = (key: string) => {
-      let entry = books.get(key);
+    // Every kind keeps its own book of purchase lots; the balance is the value
+    // of the lots still on hand, so sale costs and stock value always agree.
+    const lots = new Map<string, { qty: number; rate: number }[]>();
+    const bucketOf = (key: string) => {
+      let entry = lots.get(key);
       if (!entry) {
-        entry = { qty: 0, value: 0 };
-        books.set(key, entry);
+        entry = [];
+        lots.set(key, entry);
       }
       return entry;
     };
+    const balance = (key: string) => {
+      let qty = 0, value = 0;
+      for (const lot of bucketOf(key)) {
+        qty += lot.qty;
+        value += lot.qty * lot.rate;
+      }
+      return { qty, value };
+    };
     const avgOf = (key: string) => {
-      const entry = book(key);
+      const entry = balance(key);
       return entry.qty > 0 ? entry.value / entry.qty : 0;
     };
+    const addLot = (key: string, qty: number, rate: number) => bucketOf(key).push({ qty, rate });
+    const takeLots = (key: string, qty: number) => {
+      let need = qty, cost = 0;
+      for (const lot of bucketOf(key)) {
+        if (need <= 0) break;
+        const take = Math.min(need, lot.qty);
+        cost += take * lot.rate;
+        lot.qty -= take;
+        need -= take;
+      }
+      return cost;
+    };
     const push = (kindKey: string, row: Omit<BatteryStockRow, 'kindKey' | 'balanceQty' | 'balanceValue'>) => {
-      const entry = book(kindKey);
+      const entry = balance(kindKey);
       rows.push({
         ...row,
         kindKey,
@@ -4094,9 +4541,7 @@ export class DataService {
           if (inQty <= 0) continue;
           const kindKey = l.kindKey || l.kind || 'other';
           const rate = Number(l.rate) || 0;
-          const entry = book(kindKey);
-          entry.qty += inQty;
-          entry.value += inQty * rate;
+          addLot(kindKey, inQty, rate);
           push(kindKey, {
             date: v.date,
             voucherNo: v.voucherNo,
@@ -4115,11 +4560,9 @@ export class DataService {
           const outQty = Number(l.kg) || 0;
           if (outQty <= 0) continue;
           const kindKey = l.kindKey || l.kind || 'other';
-          const entry = book(kindKey);
           const rate = Number(l.rate) || 0;
-          const cost = outQty * avgOf(kindKey);
-          entry.qty -= outQty;
-          entry.value -= cost;
+          // Sold kilograms leave the oldest lots first, carrying their own cost.
+          takeLots(kindKey, outQty);
           push(kindKey, {
             date: v.date,
             voucherNo: v.voucherNo,
@@ -4134,12 +4577,10 @@ export class DataService {
           });
         }
       } else {
-        const exchange = book('exchange');
         const received = Number(v.receivedKg) || 0;
         if (received > 0) {
           const rate = avgOf('exchange');
-          exchange.qty += received;
-          exchange.value += received * rate;
+          addLot('exchange', received, rate);
           push('exchange', {
             date: v.date,
             voucherNo: v.voucherNo,
@@ -4156,8 +4597,7 @@ export class DataService {
         const given = Number(v.givenKg) || 0;
         if (given > 0) {
           const rate = avgOf('exchange');
-          exchange.qty -= given;
-          exchange.value -= given * rate;
+          takeLots('exchange', given);
           push('exchange', {
             date: v.date,
             voucherNo: v.voucherNo,
@@ -4176,13 +4616,13 @@ export class DataService {
     return rows;
   }
 
-  /** Remaining quantity per battery kind, valued at that kind's own average purchase rate. */
+  /** Remaining quantity per battery kind, valued at the purchase lots still on hand. */
   batteryKindStock(): BatteryKindStock[] {
-    const buckets = new Map<string, { label: string; units: Set<BatteryUnit>; inQty: number; inValue: number; outQty: number }>();
+    const buckets = new Map<string, { label: string; units: Set<BatteryUnit>; inQty: number; outQty: number }>();
     const bucket = (key: string, label: string) => {
       let entry = buckets.get(key);
       if (!entry) {
-        entry = { label, units: new Set(), inQty: 0, inValue: 0, outQty: 0 };
+        entry = { label, units: new Set(), inQty: 0, outQty: 0 };
         buckets.set(key, entry);
       }
       return entry;
@@ -4202,25 +4642,27 @@ export class DataService {
         const kind = batteryKindByKey(l.kindKey);
         const entry = bucket(l.kindKey || l.kind || 'other', kind?.bn || l.kind || 'অন্যান্য');
         entry.units.add(l.unit || 'kg');
-        if (v.type === 'purchase') {
-          entry.inQty += q;
-          entry.inValue += q * (Number(l.rate) || 0);
-        } else {
-          entry.outQty += q;
-        }
+        if (v.type === 'purchase') entry.inQty += q;
+        else entry.outQty += q;
       }
     }
 
+    const remaining = this.batteryLotBook().remaining;
     return [...buckets.entries()].map(([key, entry]) => {
       const qty = Math.round((entry.inQty - entry.outQty) * 100) / 100;
-      const avgRate = entry.inQty > 0 ? entry.inValue / entry.inQty : 0;
+      // Leftover lots carry the purchase cost of exactly what is still in stock.
+      const left = remaining.get(key) ?? remaining.get(entry.label);
+      const value = left && qty > 0 && left.qty > 0
+        ? this.roundMoney(Math.min(qty, left.qty) * (left.value / left.qty))
+        : 0;
+      const avgRate = qty > 0 ? value / qty : 0;
       const units = [...entry.units];
       return {
         key,
         label: entry.label,
         unit: units.length === 1 ? units[0] : 'mixed',
         qty,
-        value: this.roundMoney(qty * avgRate),
+        value,
         avgRate: Math.round(avgRate * 100) / 100
       };
     });
@@ -4722,7 +5164,7 @@ export class DataService {
   /** Edits a receipt in place: the old ledger effect is reversed, the new one applied. */
   updatePayment(id: number, patch: { amount?: number; discount?: number; mode?: LedgerPayment['mode']; date?: string; note?: string }): LedgerPayment | null {
     const old = this.payments().find(p => p.id === id);
-    if (!old) return null;
+    if (!old || old.batteryFundTransferId != null) return null;
     this.archive('sm_payments_v1', 'পেমেন্ট', old);
     const side: PartySide = old.partyType === 'Supplier' ? 'purchase' : 'sales';
     const oldAdvance = this.roundMoney(old.advance || 0);
@@ -4756,6 +5198,14 @@ export class DataService {
   }
 
   deletePayment(id: number) {
+    const old = this.payments().find(x => x.id === id);
+    if (!old || old.batteryFundTransferId != null) return;
+    this.forceDeletePayment(id);
+  }
+
+  /** Used by the owning battery-fund transfer, which is allowed to reverse its receipt. */
+  private forceDeletePayment(id?: number) {
+    if (id == null) return;
     const old = this.payments().find(x => x.id === id);
     if (!old) return;
     const advance = this.roundMoney(old.advance || 0);
@@ -5628,6 +6078,8 @@ export class DataService {
     address: 'ফুলবাড়ীগেট, খুলনা',
     mobile: '01975-232346, 01724-955851',
     email: 'smenterprise@gmail.com',
+    vatRegNo: '',
+    tradeLicenseNo: '',
     soldBy: 'Admin',
     showLogo: true,
     showWatermark: false,
@@ -5645,6 +6097,10 @@ export class DataService {
     showTerms: true,
     showSummary: true,
     showSignatureImage: true,
+    showPaymentStatus: true,
+    showItemCode: true,
+    showCopyLabels: true,
+    showAmountInWords: true,
     accentColor: '#087d6c',
     greetingText: 'ধন্যবাদ, আবার আসবেন!',
     notesText: '',
