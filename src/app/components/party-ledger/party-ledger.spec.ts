@@ -129,4 +129,21 @@ describe('PartyLedger payment correction', () => {
     component.openEditPayment(data.payments()[0]);
     expect(component.showPayment()).toBe(false);
   });
+
+  it('shows standalone battery voucher dues and in-voucher payments in the ledger', () => {
+    const { data, fixture } = ledgerSetup('Admin');
+    const voucher = data.addBatteryVoucher({
+      type: 'sale', date: '2026-11-14', partyName: 'Test Party', partyId: 1,
+      lot: '', lines: [], totalKg: 1, total: 300, cost: 200, cash: 100, bank: 0, mobile: 0,
+      ref: '', paid: 100, due: 200, notes: '', preparedBy: 'Admin', createdAt: new Date().toISOString()
+    });
+    fixture.componentRef.setInput('party', data.parties()[0]);
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+
+    expect(component.rows().some(row => row.ref === voucher.voucherNo && row.debit === 300)).toBe(true);
+    expect(component.rows().some(row => row.ref === voucher.voucherNo && row.credit === 100)).toBe(true);
+    expect(component.rows().at(-1)?.balance).toBe(600);
+    expect(component.deposits().some(row => row.ref === voucher.voucherNo && row.amount === 100)).toBe(true);
+  });
 });

@@ -1480,6 +1480,112 @@ describe('Party opening balance helpers', () => {
     expect(data.partyOpeningBalance(data.parties()[0], 'sales')).toBe(400);
     expect(data.parties()[0].salesDue).toBe(400);
   });
+
+  it('keeps document movement and opening stable after a party rename', () => {
+    const { data } = setup();
+    data.products.set([product({ stock: 10 })]);
+    data.parties.set([party()]);
+    sale(data, { partyId: 1, total: 100, paid: 0, due: 100 });
+    const before = data.partyOpeningBalance(data.parties()[0], 'sales');
+
+    data.updateParty({ ...data.parties()[0], name: 'Renamed Customer' });
+
+    expect(data.partyBookMovement(data.parties()[0], 'sales')).toBe(100);
+    expect(data.partyOpeningBalance(data.parties()[0], 'sales')).toBe(before);
+    expect(data.parties()[0].salesDue).toBe(100);
+  });
+
+  it('includes standalone battery vouchers but not sale adjustments in movement', () => {
+    const { data } = setup();
+    const customer = data.addParty(party({ name: 'Battery Customer' }) as unknown as Omit<Party, 'id'>);
+    data.addBatteryVoucher({
+      type: 'sale', date: '2026-11-14', partyName: customer.name, partyId: customer.id,
+      lot: '', lines: [], totalKg: 1, total: 800, cost: 600, cash: 300, bank: 0, mobile: 0,
+      ref: '', paid: 300, due: 500, notes: '', preparedBy: 'Admin', createdAt: new Date().toISOString()
+    });
+    data.addBatteryVoucher({
+      type: 'sale', date: '2026-11-14', partyName: customer.name, partyId: customer.id,
+      lot: '', lines: [], totalKg: 1, total: 900, cost: 600, cash: 0, bank: 0, mobile: 0,
+      ref: '', paid: 0, due: 900, notes: '', preparedBy: 'Admin', createdAt: new Date().toISOString(),
+      source: 'sale-adjustment', saleInvoice: 'Sale-9000'
+    });
+
+    expect(data.partyBookMovement(data.parties()[0], 'sales')).toBe(500);
+    expect(data.partyOpeningBalance(data.parties()[0], 'sales')).toBe(0);
+  });
+
+  it('uses the receipt side for a party that is both customer and supplier', () => {
+    const { data } = setup();
+    data.parties.set([party({ roles: ['Customer', 'Supplier'], salesDue: 100, due: 100 })]);
+    data.recordPayment({ partyId: 1, partyName: 'Customer', partyType: 'Supplier', side: 'sales', amount: 100, discount: 0, mode: 'Cash', date: '2026-11-11', note: '' });
+
+    expect(data.partyBookMovement(data.parties()[0], 'sales')).toBe(-100);
+    expect(data.partyBookMovement(data.parties()[0], 'purchase')).toBe(0);
+    expect(data.payments()[0].side).toBe('sales');
+  });
+
+  it('seeds a legacy opening without changing the current due and is idempotent', () => {
+    const { data } = setup();
+    data.parties.set([party({ id: 5, name: 'Legacy', salesTotal: 1000, salesPaid: 200, salesDue: 700 })]);
+
+    const plan = data.planPartyBalanceRepairs();
+    expect(plan).toHaveLength(1);
+    expect(plan[0]).toMatchObject({
+      partyId: 5, side: 'sales', kind: 'opening-baseline',
+      openingBefore: 0, openingAfter: 700, dueBefore: 700, dueAfter: 700,
+      totalBefore: 1000, totalAfter: 0, paidBefore: 200, paidAfter: 0
+    });
+
+    expect(data.applyPartyBalanceRepairs(plan).skipped).toHaveLength(0);
+    expect(data.parties()[0]).toMatchObject({
+      openingBalance: 700, openingBalanceType: 'Pay', salesDue: 700, salesTotal: 0, salesPaid: 0
+    });
+    expect(data.planPartyBalanceRepairs()).toHaveLength(0);
+  });
+
+  it('repairs an unsupported due mismatch from the stored opening and documents', () => {
+    const { data } = setup();
+    data.products.set([product({ stock: 10 })]);
+    data.parties.set([party({ openingBalance: 202322, openingBalanceType: 'Pay' })]);
+    sale(data, {
+      items: [{ id: 1, productId: 10, productName: 'Battery', quantity: 1, unit: 'pcs', salesPrice: 104940, total: 104940 }],
+      total: 104940, paid: 75000, due: 29940, paymentStatus: 'Partially Paid'
+    });
+    data.updateParty({
+      ...data.parties()[0], salesTotal: 73540, salesPaid: 45000, salesDue: 249571,
+      total: 73540, paid: 45000, due: 249571
+    });
+
+    const plan = data.planPartyBalanceRepairs();
+    expect(plan).toHaveLength(1);
+    expect(plan[0]).toMatchObject({
+      kind: 'balance-correction', movement: 29940,
+      dueBefore: 249571, dueAfter: 232262,
+      totalBefore: 73540, totalAfter: 104940,
+      paidBefore: 45000, paidAfter: 75000
+    });
+
+    data.applyPartyBalanceRepairs(plan);
+    expect(data.parties()[0].salesDue).toBe(232262);
+    expect(data.partyOpeningBalance(data.parties()[0], 'sales')).toBe(202322);
+    expect(data.planPartyBalanceRepairs()).toHaveLength(0);
+  });
+
+  it('skips a stale repair plan instead of overwriting a newer document', () => {
+    const { data } = setup();
+    data.products.set([product({ stock: 10 })]);
+    data.parties.set([party({ openingBalance: 100, openingBalanceType: 'Pay' })]);
+    sale(data, { total: 100, paid: 0, due: 100 });
+    data.updateParty({ ...data.parties()[0], salesDue: 999 });
+    const plan = data.planPartyBalanceRepairs();
+
+    sale(data, { total: 50, paid: 0, due: 50 });
+    const result = data.applyPartyBalanceRepairs(plan);
+
+    expect(result.applied).toHaveLength(0);
+    expect(result.skipped).toHaveLength(1);
+    expect(data.parties()[0].salesDue).toBe(1049);
+  });
 });
 
 describe('Payment promise reminders', () => {

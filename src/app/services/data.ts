@@ -262,6 +262,24 @@ export interface Party {
 
 export type PartySide = 'sales' | 'purchase';
 
+export interface PartyBalanceRepair {
+  partyId: number;
+  partyName: string;
+  side: PartySide;
+  kind: 'opening-baseline' | 'balance-correction' | 'aggregate-correction';
+  movement: number;
+  openingBefore: number;
+  openingAfter: number;
+  openingTypeBefore?: 'Pay' | 'Receive';
+  openingTypeAfter?: 'Pay' | 'Receive';
+  totalBefore: number;
+  totalAfter: number;
+  paidBefore: number;
+  paidAfter: number;
+  dueBefore: number;
+  dueAfter: number;
+}
+
 const partyRound = (value: unknown) => Math.round((Number(value) || 0) * 100) / 100;
 
 /** A fresh shop's first bill is Sale-1001, not Sale-0001. */
@@ -940,6 +958,8 @@ export interface LedgerPayment {
   partyId: number;
   partyName: string;
   partyType: 'Customer' | 'Supplier';
+  /** Book settled by this receipt; older receipts infer it from partyType. */
+  side?: PartySide;
   amount: number;
   discount: number;
   /** Part of amount+discount that exceeded the due and became an advance; the rest settled the due. */
@@ -2191,39 +2211,71 @@ export class DataService {
     return this.roundMoney(battery + returned);
   }
 
-  /**
-   * Signed effect of every posted document on one book: what the due would be
-   * if the party had started from zero. Mirrors the party ledger rows exactly.
-   */
-  partyBookMovement(party: Party, side: PartySide): number {
-    const key = (party.name || '').trim().toLowerCase();
-    const same = (name?: string) => key.length > 0 && (name || '').trim().toLowerCase() === key;
+  private belongsToParty(party: Party, partyId: number | undefined, name: string | undefined): boolean {
+    return this.partyForReference(partyId, name || '')?.id === party.id;
+  }
+
+  private partyBookFigures(party: Party, side: PartySide): { movement: number; total: number; paid: number } {
     const money = (value?: number | string | null) => this.roundMoney(Number(value) || 0);
     let movement = 0;
+    let total = 0;
+    let paid = 0;
     if (side === 'sales') {
       for (const s of this.sales()) {
-        if (s.status === 'Cancelled' || !same(s.customerName)) continue;
-        movement += money(s.total) - money(s.paid) - money(this.saleCredits(s));
+        if (s.status === 'Cancelled' || !this.belongsToParty(party, s.partyId, s.customerName)) continue;
+        const bill = money(s.total);
+        const received = money(s.paid);
+        total += bill;
+        paid += received;
+        movement += bill - received - money(this.saleCredits(s));
       }
       for (const r of this.salesReturns()) {
-        if (r.status === 'Posted' && same(r.customerName)) movement -= money(r.amount);
+        if (r.status !== 'Posted' || !this.belongsToParty(party, r.partyId, r.customerName)) continue;
+        const amount = money(r.amount);
+        total -= amount;
+        movement -= amount;
       }
     } else {
       for (const p of this.purchases()) {
-        if (!same(p.supplierName)) continue;
-        movement += money(p.total) - money(p.paid);
+        if (!this.belongsToParty(party, p.partyId, p.supplierName)) continue;
+        const bill = money(p.total);
+        const received = money(p.paid);
+        total += bill;
+        paid += received;
+        movement += bill - received;
       }
       for (const r of this.supplierReturns()) {
-        if (r.partyId === party.id && this.supplierReturnPosts(r.status)) movement -= money(r.amount);
+        if (!this.belongsToParty(party, r.partyId, r.partyName) || !this.supplierReturnPosts(r.status)) continue;
+        movement -= money(r.amount);
       }
     }
-    for (const pay of this.payments()) {
-      const paySide: PartySide = pay.partyType === 'Supplier' ? 'purchase' : pay.partyType === 'Customer' ? 'sales' : side;
-      if (paySide !== side) continue;
-      if (pay.partyId !== party.id && !same(pay.partyName)) continue;
-      movement -= money(pay.amount) + money(pay.discount) - money(pay.advance);
+    for (const voucher of this.batteryVouchers()) {
+      if (voucher.source === 'sale-adjustment') continue;
+      const voucherSide: PartySide = voucher.type === 'purchase' ? 'purchase' : 'sales';
+      if (voucherSide !== side || !this.belongsToParty(party, voucher.partyId, voucher.partyName)) continue;
+      const bill = money(voucher.total);
+      const received = money(voucher.paid);
+      total += bill;
+      paid += received;
+      movement += money(voucher.due ?? (bill - received));
     }
-    return this.roundMoney(movement);
+    for (const pay of this.payments()) {
+      const paySide: PartySide = pay.side ?? (pay.partyType === 'Supplier' ? 'purchase' : 'sales');
+      if (paySide !== side || !this.belongsToParty(party, pay.partyId, pay.partyName)) continue;
+      const received = money(pay.amount);
+      paid += received;
+      movement -= received + money(pay.discount) - money(pay.advance);
+    }
+    return {
+      movement: this.roundMoney(movement),
+      total: this.roundMoney(total),
+      paid: this.roundMoney(paid)
+    };
+  }
+
+  /** Signed effect of every posted document on one book, starting from zero. */
+  partyBookMovement(party: Party, side: PartySide): number {
+    return this.partyBookFigures(party, side).movement;
   }
 
   /**
@@ -2233,6 +2285,95 @@ export class DataService {
    */
   partyOpeningBalance(party: Party, side: PartySide): number {
     return this.roundMoney(accountOf(party, side).due - this.partyBookMovement(party, side));
+  }
+
+  planPartyBalanceRepairs(): PartyBalanceRepair[] {
+    const repairs: PartyBalanceRepair[] = [];
+    for (const party of this.parties()) {
+      const openingSide: PartySide = hasSalesRole(party) ? 'sales' : 'purchase';
+      const otherSide: PartySide = openingSide === 'sales' ? 'purchase' : 'sales';
+      const storedOpening = this.roundMoney(
+        (Number(party.openingBalance) || 0) * (party.openingBalanceType === 'Receive' ? -1 : 1)
+      );
+      for (const side of [openingSide, otherSide]) {
+        const account = accountOf(party, side);
+        const figures = this.partyBookFigures(party, side);
+        const openingBefore = side === openingSide ? storedOpening : 0;
+        const legacyBaseline = side === openingSide && storedOpening === 0 && account.due !== figures.movement;
+        const openingAfter = legacyBaseline
+          ? this.roundMoney(account.due - figures.movement)
+          : openingBefore;
+        const dueAfter = this.roundMoney(openingAfter + figures.movement);
+        const openingChanged = openingBefore !== openingAfter;
+        const balanceChanged = account.due !== dueAfter;
+        const aggregateChanged = account.total !== figures.total || account.paid !== figures.paid;
+        if (!openingChanged && !balanceChanged && !aggregateChanged) continue;
+        repairs.push({
+          partyId: party.id,
+          partyName: party.name,
+          side,
+          kind: legacyBaseline ? 'opening-baseline' : balanceChanged ? 'balance-correction' : 'aggregate-correction',
+          movement: figures.movement,
+          openingBefore,
+          openingAfter,
+          openingTypeBefore: side === openingSide ? party.openingBalanceType : undefined,
+          openingTypeAfter: side === openingSide ? (openingAfter < 0 ? 'Receive' : 'Pay') : undefined,
+          totalBefore: account.total,
+          totalAfter: figures.total,
+          paidBefore: account.paid,
+          paidAfter: figures.paid,
+          dueBefore: account.due,
+          dueAfter
+        });
+      }
+    }
+    return repairs;
+  }
+
+  applyPartyBalanceRepairs(plan: PartyBalanceRepair[]): { applied: PartyBalanceRepair[]; skipped: PartyBalanceRepair[] } {
+    const applied: PartyBalanceRepair[] = [];
+    const skipped: PartyBalanceRepair[] = [];
+    this.parties.update(list => list.map(party => {
+      const candidates = plan.filter(item => item.partyId === party.id);
+      if (!candidates.length) return party;
+      let next = party;
+      for (const repair of candidates) {
+        const account = accountOf(next, repair.side);
+        const figures = this.partyBookFigures(next, repair.side);
+        const storedOpening = this.roundMoney(
+          (Number(next.openingBalance) || 0) * (next.openingBalanceType === 'Receive' ? -1 : 1)
+        );
+        const openingBefore = repair.side === (hasSalesRole(next) ? 'sales' : 'purchase') ? storedOpening : 0;
+        if (
+          figures.movement !== repair.movement
+          || figures.total !== repair.totalAfter
+          || figures.paid !== repair.paidAfter
+          || account.total !== repair.totalBefore
+          || account.paid !== repair.paidBefore
+          || account.due !== repair.dueBefore
+          || openingBefore !== repair.openingBefore
+        ) {
+          skipped.push(repair);
+          continue;
+        }
+        if (repair.openingBefore !== repair.openingAfter || repair.openingTypeBefore !== repair.openingTypeAfter) {
+          next = {
+            ...next,
+            openingBalance: Math.abs(repair.openingAfter),
+            openingBalanceType: repair.openingAfter < 0 ? 'Receive' : 'Pay'
+          };
+        }
+        next = this.patchPartyAccount(next, repair.side, {
+          total: repair.totalAfter - account.total,
+          paid: repair.paidAfter - account.paid,
+          due: repair.dueAfter - account.due
+        });
+        applied.push(repair);
+      }
+      return next;
+    }));
+    if (applied.length) this.saveParties();
+    return { applied, skipped };
   }
 
   /**
@@ -3077,6 +3218,7 @@ export class DataService {
       partyId: input.partyId,
       partyName: input.partyName,
       partyType: input.partyType,
+      side,
       amount,
       discount,
       advance,
@@ -5166,7 +5308,7 @@ export class DataService {
     const old = this.payments().find(p => p.id === id);
     if (!old || old.batteryFundTransferId != null) return null;
     this.archive('sm_payments_v1', 'পেমেন্ট', old);
-    const side: PartySide = old.partyType === 'Supplier' ? 'purchase' : 'sales';
+    const side: PartySide = old.side ?? (old.partyType === 'Supplier' ? 'purchase' : 'sales');
     const oldAdvance = this.roundMoney(old.advance || 0);
     const oldSettlement = this.roundMoney(Math.max(0, (old.amount || 0) + (old.discount || 0) - oldAdvance));
     this.parties.update(list => list.map(p => p.id === old.partyId
@@ -5212,7 +5354,7 @@ export class DataService {
     const settlement = this.roundMoney(Math.max(0, (old.amount || 0) + (old.discount || 0) - advance));
     this.archive('sm_payments_v1', 'পেমেন্ট', old);
     this.payments.update(list => list.filter(x => x.id !== id));
-    const side: PartySide = old.partyType === 'Supplier' ? 'purchase' : 'sales';
+    const side: PartySide = old.side ?? (old.partyType === 'Supplier' ? 'purchase' : 'sales');
     this.parties.update(list => list.map(p => p.id === old.partyId
       ? this.patchPartyAccount(p, side, { paid: -old.amount, due: settlement, advance: -advance })
       : p));

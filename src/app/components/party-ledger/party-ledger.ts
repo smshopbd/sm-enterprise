@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import {
-  DataService, LedgerPayment, Party, PartySide,
+  DataService, BatteryVoucher, LedgerPayment, Party, PartySide,
   accountOf, hasPurchaseRole, hasSalesRole, partyPhones, partyRoles, promiseRemaining,
   purchaseAccountOf, salesAccountOf
 } from '../../services/data';
@@ -1096,14 +1096,14 @@ export class PartyLedger implements OnInit {
   readonly salesInvoices = computed(() => {
     const party = this.party();
     return this.dataService.sales()
-      .filter(sale => this.sameName(sale.customerName, party.name) && sale.status !== 'Cancelled')
+      .filter(sale => this.belongsToParty(party, sale.partyId, sale.customerName) && sale.status !== 'Cancelled')
       .sort((a, b) => this.dateValue(b.date) - this.dateValue(a.date));
   });
 
   readonly purchaseInvoices = computed(() => {
     const party = this.party();
     return this.dataService.purchases()
-      .filter(purchase => this.sameName(purchase.supplierName, party.name))
+      .filter(purchase => this.belongsToParty(party, purchase.partyId, purchase.supplierName))
       .sort((a, b) => this.dateValue(b.date) - this.dateValue(a.date));
   });
 
@@ -1247,7 +1247,7 @@ export class PartyLedger implements OnInit {
     const list: LedgerRow[] = [];
 
     if (supplier) {
-      for (const p of this.dataService.purchases().filter(x => this.sameName(x.supplierName, party.name))) {
+      for (const p of this.dataService.purchases().filter(x => this.belongsToParty(party, x.partyId, x.supplierName))) {
         list.push({
           key: `pur-${p.id}`, date: p.date, type: 'purchase', ref: p.invoice,
           note: p.notes === '-' ? '' : p.notes, debit: 0, credit: this.num(p.total), balance: 0
@@ -1255,7 +1255,7 @@ export class PartyLedger implements OnInit {
       }
       list.push(...this.voucherPaymentRows(party));
     } else {
-      for (const s of this.dataService.sales().filter(x => this.sameName(x.customerName, party.name) && x.status !== 'Cancelled')) {
+      for (const s of this.dataService.sales().filter(x => this.belongsToParty(party, x.partyId, x.customerName) && x.status !== 'Cancelled')) {
         list.push({
           key: `sale-${s.id}`, date: s.date, type: 'sale', ref: s.invoice,
           note: [s.notes && s.notes !== '-' ? s.notes : '', s.status].filter(Boolean).join(' · '),
@@ -1273,6 +1273,17 @@ export class PartyLedger implements OnInit {
       list.push(...this.creditNoteRows(party));
     }
 
+    for (const voucher of this.batteryVouchersOf(party)) {
+      list.push({
+        key: `bat-${voucher.id}`, date: voucher.date,
+        type: supplier ? 'purchase' : 'sale', ref: voucher.voucherNo,
+        note: [this.prefs.txt('ব্যাটারি ভাউচার', 'Battery voucher'), this.dash(voucher.notes)].filter(Boolean).join(' · '),
+        debit: supplier ? 0 : this.num(voucher.total),
+        credit: supplier ? this.num(voucher.total) : 0,
+        balance: 0
+      });
+    }
+
     for (const pay of this.paymentsOf(party)) {
       const settled = this.paymentSettlement(pay);
       list.push({
@@ -1282,7 +1293,7 @@ export class PartyLedger implements OnInit {
     }
 
     if (supplier) {
-      for (const ret of this.dataService.supplierReturns().filter(x => x.partyId === party.id && this.dataService.supplierReturnPosts(x.status))) {
+      for (const ret of this.dataService.supplierReturns().filter(x => this.belongsToParty(party, x.partyId, x.partyName) && this.dataService.supplierReturnPosts(x.status))) {
         list.push({
           key: `ret-${ret.id}`, date: ret.date, type: 'return', ref: ret.returnNo,
           note: ret.note, debit: this.num(ret.amount), credit: 0, balance: 0
@@ -1314,15 +1325,13 @@ export class PartyLedger implements OnInit {
 
   /** Receipts belong to the book they settled; a dual-role party has both kinds. */
   private paymentSide(pay: LedgerPayment): PartySide {
-    if (pay.partyType === 'Supplier') return 'purchase';
-    if (pay.partyType === 'Customer') return 'sales';
-    return this.bookSide();
+    return pay.side ?? (pay.partyType === 'Supplier' ? 'purchase' : 'sales');
   }
 
   private paymentsOf(party: Party): LedgerPayment[] {
     const side = this.bookSide();
     return this.dataService.payments()
-      .filter(x => (x.partyId === party.id || this.sameName(x.partyName, party.name)) && this.paymentSide(x) === side);
+      .filter(x => this.belongsToParty(party, x.partyId, x.partyName) && this.paymentSide(x) === side);
   }
 
   /** Every taka the party actually handed over: payment-book receipts plus money settled inside vouchers. */
@@ -1353,7 +1362,7 @@ export class PartyLedger implements OnInit {
 
     if (supplier) {
       for (const p of this.dataService.purchases()
-        .filter(x => this.sameName(x.supplierName, party.name) && this.num(x.paid) > 0)) {
+        .filter(x => this.belongsToParty(party, x.partyId, x.supplierName) && this.num(x.paid) > 0)) {
         list.push({
           key: `vpur-${p.id}`,
           at: this.momentValue(p.date, p.createdAt),
@@ -1367,7 +1376,7 @@ export class PartyLedger implements OnInit {
       }
     } else {
       for (const s of this.dataService.sales()
-        .filter(x => this.sameName(x.customerName, party.name) && x.status !== 'Cancelled' && this.num(x.paid) > 0)) {
+        .filter(x => this.belongsToParty(party, x.partyId, x.customerName) && x.status !== 'Cancelled' && this.num(x.paid) > 0)) {
         list.push({
           key: `vpay-${s.id}`,
           at: this.momentValue(s.date),
@@ -1379,6 +1388,19 @@ export class PartyLedger implements OnInit {
           note: this.dash(s.notes) || this.prefs.txt('ভাউচারে জমা', 'Received in voucher')
         });
       }
+    }
+
+    for (const voucher of this.batteryVouchersOf(party).filter(x => this.num(x.paid) > 0)) {
+      list.push({
+        key: `vbat-${voucher.id}`,
+        at: this.momentValue(voucher.date, voucher.createdAt),
+        dateLabel: this.formatDate(voucher.date),
+        time: this.timeOf(voucher.date, voucher.createdAt),
+        mode: this.batteryPaymentMode(voucher),
+        amount: this.num(voucher.paid),
+        ref: voucher.voucherNo,
+        note: this.prefs.txt('ব্যাটারি ভাউচারে পরিশোধ', 'Paid in battery voucher')
+      });
     }
 
     return list.sort((a, b) => b.at - a.at);
@@ -1424,28 +1446,54 @@ export class PartyLedger implements OnInit {
    * Money settled inside a voucher (Sale.paid / Purchase.paid) never reaches the
    * party payment book, so the statement would show the party as fully unpaid.
    */
+  private batteryVouchersOf(party: Party): BatteryVoucher[] {
+    const side = this.bookSide();
+    return this.dataService.batteryVouchers().filter(voucher => {
+      if (voucher.source === 'sale-adjustment') return false;
+      const voucherSide: PartySide = voucher.type === 'purchase' ? 'purchase' : 'sales';
+      return voucherSide === side && this.belongsToParty(party, voucher.partyId, voucher.partyName);
+    });
+  }
+
+  private batteryPaymentMode(voucher: BatteryVoucher): string {
+    if (this.num(voucher.mobile) > 0) return voucher.mobileType || 'Mobile';
+    if (this.num(voucher.bank) > 0) return 'Bank';
+    return 'Cash';
+  }
+
   private voucherPaymentRows(party: Party): LedgerRow[] {
-    if (this.bookSide() === 'purchase') {
-      return this.dataService.purchases()
-        .filter(p => this.sameName(p.supplierName, party.name) && this.num(p.paid) > 0)
+    const supplier = this.bookSide() === 'purchase';
+    const vouchers = supplier
+      ? this.dataService.purchases()
+        .filter(p => this.belongsToParty(party, p.partyId, p.supplierName) && this.num(p.paid) > 0)
         .map(p => ({
           key: `vpur-${p.id}`, date: p.date, type: 'payment' as const, ref: p.invoice,
           note: this.prefs.txt('ভাউচারে পরিশোধ', 'Paid in voucher'), debit: this.num(p.paid), credit: 0, balance: 0
+        }))
+      : this.dataService.sales()
+        .filter(s => this.belongsToParty(party, s.partyId, s.customerName) && s.status !== 'Cancelled' && this.num(s.paid) > 0)
+        .map(s => ({
+          key: `vpay-${s.id}`, date: s.date, type: 'payment' as const, ref: s.invoice,
+          note: this.prefs.txt('ভাউচারে জমা', 'Received in voucher'), debit: 0, credit: this.num(s.paid), balance: 0
         }));
-    }
-    return this.dataService.sales()
-      .filter(s => this.sameName(s.customerName, party.name) && s.status !== 'Cancelled' && this.num(s.paid) > 0)
-      .map(s => ({
-        key: `vpay-${s.id}`, date: s.date, type: 'payment' as const, ref: s.invoice,
-        note: this.prefs.txt('ভাউচারে জমা', 'Received in voucher'), debit: 0, credit: this.num(s.paid), balance: 0
-      }));
+    return [
+      ...vouchers,
+      ...this.batteryVouchersOf(party)
+        .filter(voucher => this.num(voucher.paid) > 0)
+        .map(voucher => ({
+          key: `vbat-${voucher.id}`, date: voucher.date, type: 'payment' as const, ref: voucher.voucherNo,
+          note: this.prefs.txt('ব্যাটারি ভাউচারে পরিশোধ', 'Paid in battery voucher'),
+          debit: supplier ? this.num(voucher.paid) : 0,
+          credit: supplier ? 0 : this.num(voucher.paid),
+          balance: 0
+        }))
+    ];
   }
 
   /** Posted credit notes settle part of an invoice without changing its printed total. */
   private creditNoteRows(party: Party): LedgerRow[] {
-    const key = (party.name || '').trim().toLowerCase();
     return this.dataService.salesReturns()
-      .filter(r => r.status === 'Posted' && (r.customerName || '').trim().toLowerCase() === key)
+      .filter(r => r.status === 'Posted' && this.belongsToParty(party, r.partyId, r.customerName))
       .map(r => ({
         key: `sret-${r.id}`, date: r.date, type: 'return' as const, ref: r.creditNoteNo,
         note: this.prefs.txt('ক্রেডিট নোট', 'Credit note'), debit: 0, credit: this.num(r.amount), balance: 0
@@ -1627,9 +1675,8 @@ export class PartyLedger implements OnInit {
     return base + 'bg-slate-100 text-slate-600';
   }
 
-  private sameName(a: string | undefined, b: string | undefined): boolean {
-    return (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase()
-      && (a || '').trim().length > 0;
+  private belongsToParty(party: Party, partyId: number | undefined, name: string | undefined): boolean {
+    return this.dataService.partyForReference(partyId, name || '')?.id === party.id;
   }
 
   /** Only the part of a receipt that cleared a due moves the statement; the excess is an advance. */
