@@ -21,11 +21,12 @@ export const appConfig: ApplicationConfig = {
     provideBrowserGlobalErrorListeners(),
     { provide: ErrorHandler, useClass: AppErrorHandler },
     provideRouter(routes),
-    // Offline shell after the first visit; a new build waits for the user's
-    // tap in the app banner instead of reloading during data entry.
+    // Offline shell after the first visit. Registration runs immediately so a
+    // freshly deployed build is noticed at startup; App decides exactly when
+    // the swap reload may run without losing typed data.
     provideServiceWorker('ngsw-worker.js', {
       enabled: !isDevMode(),
-      registrationStrategy: 'registerWhenStable:30000',
+      registrationStrategy: 'registerImmediately',
     }),
     // Nothing renders until the database is open and every collection is in
     // memory, so a page can never show an empty shop and then save over real data.

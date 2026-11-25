@@ -6,6 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { DataService, WarrantyReceipt, WarrantyReplacement } from '../../../services/data';
 import { NotificationService } from '../../../services/notification';
 import { PreferencesService } from '../../../services/preferences';
+import { localizeAddress } from '../../../utils/bd-geo';
 import { createPager } from '../../../components/table-pagination/pagination';
 import { TablePagination } from '../../../components/table-pagination/table-pagination';
 import { DmyDateDirective } from '../../../directives/dmy-date.directive';
@@ -104,7 +105,7 @@ interface ReplacementForm {
                 <p class="font-bold text-teal-800 dark:text-teal-200">{{ receipt.claimNo }} · {{ receipt.customerName }} · {{ receipt.phone || '—' }}</p>
                 <p class="mt-1">{{ prefs.txt('জমা পণ্য', 'Received product') }}: {{ receipt.productName }} · {{ receipt.quantity }} {{ receipt.unit }} · {{ prefs.txt('পুরাতন সিরিয়াল', 'Old serial') }}: <span class="font-mono">{{ receipt.serialNumber || '—' }}</span></p>
                 <p>{{ prefs.txt('ইনভয়েস', 'Invoice') }}: {{ receipt.invoiceNumber || '—' }} · {{ prefs.txt('কন্ডিশন', 'Condition') }}: {{ receipt.condition || '—' }} · {{ receipt.stockIn ? prefs.txt('গ্রহণ স্টকে জমা হয়েছে', 'Booked into intake stock') : prefs.txt('গ্রহণ স্টকে জমা হয়নি', 'Not booked into intake stock') }}</p>
-                @if (receipt.address) { <p>{{ prefs.txt('ঠিকানা', 'Address') }}: {{ receipt.address }}</p> }
+                @if (receipt.address) { <p>{{ prefs.txt('ঠিকানা', 'Address') }}: {{ addr(receipt.address) }}</p> }
                 @if (receipt.reason) { <p class="whitespace-pre-line">{{ prefs.txt('সমস্যা', 'Fault') }}: {{ receipt.reason }}</p> }
               </div>
             }
@@ -317,6 +318,10 @@ export class WarrantyReplace {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   readonly prefs = inject(PreferencesService);
+
+  addr(value?: string): string {
+    return localizeAddress(value, this.prefs.language());
+  }
   /** The list and the form live on separate routes; only one is rendered at a time. */
   readonly isFormView = this.route.snapshot.data['warrantyView'] === 'form';
   readonly settings = this.dataService.warrantySettings;

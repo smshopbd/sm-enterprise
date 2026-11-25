@@ -23,6 +23,8 @@ type SettingsTab = 'business' | 'appearance' | 'warehouse' | 'units' | 'cloud' |
 const PERMISSION_LABELS: { key: Permission; bn: string; en: string }[] = [
   { key: 'usePos', bn: 'POS ও বিক্রয়', en: 'POS & sales' },
   { key: 'editPrice', bn: 'বিক্রয়মূল্য / ডিসকাউন্ট পরিবর্তন', en: 'Edit sale price / discount' },
+  { key: 'editPartyMoney', bn: 'পার্টির টাকা ও ওপেনিং সংশোধন', en: 'Edit party money & opening' },
+  { key: 'editStock', bn: 'স্টক ও প্রারম্ভিক স্টক সংশোধন', en: 'Edit stock & opening stock' },
   { key: 'deleteRecords', bn: 'রেকর্ড ডিলিট', en: 'Delete records' },
   { key: 'viewReports', bn: 'রিপোর্ট দেখা', en: 'View reports' },
   { key: 'viewAccounts', bn: 'হিসাব ও লেজার দেখা', en: 'View accounts & ledger' },
@@ -130,6 +132,35 @@ const PERMISSION_LABELS: { key: Permission; bn: string; en: string }[] = [
                   <span class="block text-[11px] text-slate-500 mt-0.5">{{ prefs.t('settings.wholesaleHint') }}</span>
                 </span>
               </label>
+            </div>
+
+            <div class="rounded-xl border border-amber-200 bg-amber-50/50 p-4 space-y-3">
+              <h4 class="font-bold text-xs uppercase tracking-wide text-amber-800">{{ prefs.txt('এডিট লক', 'Edit locks') }}</h4>
+              @if (isMainUser()) {
+                <label class="flex items-start gap-2.5 cursor-pointer">
+                  <input type="checkbox" [(ngModel)]="business.lockPartyMoney" class="mt-0.5 w-4 h-4 accent-amber-600 cursor-pointer">
+                  <span>
+                    <span class="block font-bold text-slate-800">{{ prefs.txt('পার্টির টাকা এডিট লক', 'Lock party money edits') }}</span>
+                    <span class="block text-[11px] text-slate-500 mt-0.5">{{ prefs.txt('চালু থাকলে মালিক ছাড়া কেউ ওপেনিং ব্যালেন্স বা রেকর্ড করা পেমেন্ট সংশোধন করতে পারবে না — পারমিশন দেওয়া থাকলেও না।', 'When on, nobody except the owner can change an opening balance or correct a recorded payment — even with the permission granted.') }}</span>
+                  </span>
+                </label>
+                <label class="flex items-start gap-2.5 cursor-pointer">
+                  <input type="checkbox" [(ngModel)]="business.lockStock" class="mt-0.5 w-4 h-4 accent-amber-600 cursor-pointer">
+                  <span>
+                    <span class="block font-bold text-slate-800">{{ prefs.txt('স্টক এডিট লক', 'Lock stock edits') }}</span>
+                    <span class="block text-[11px] text-slate-500 mt-0.5">{{ prefs.txt('চালু থাকলে পণ্যের স্টক, প্রারম্ভিক স্টক বা স্টক সমন্বয় শুধু মালিক করতে পারবে। ক্রয়-বিক্রয়ের স্বাভাবিক হিসাব চলবে।', 'When on, only the owner can change stock, opening stock or reconcile stock. Normal purchase and sale postings keep working.') }}</span>
+                  </span>
+                </label>
+                <p class="text-[10px] text-amber-800">{{ prefs.txt('লক চালু থাকলে ইউজারের পারমিশন থাকলেও কাজ হবে না। সংরক্ষণ করতে নিচের সেভ চাপুন।', 'A lock overrides any per-user permission. Press Save below to apply.') }}</p>
+              } @else {
+                <p class="text-[11px] font-semibold text-slate-600">{{ prefs.txt('এই লকগুলো শুধু মালিক অ্যাকাউন্ট বদলাতে পারে।', 'Only the owner account can change these locks.') }}</p>
+                <p class="text-[11px] text-slate-500">
+                  {{ prefs.txt('পার্টির টাকা:', 'Party money:') }}
+                  <b>{{ business.lockPartyMoney ? prefs.txt('লক করা', 'Locked') : prefs.txt('খোলা', 'Open') }}</b>
+                  · {{ prefs.txt('স্টক:', 'Stock:') }}
+                  <b>{{ business.lockStock ? prefs.txt('লক করা', 'Locked') : prefs.txt('খোলা', 'Open') }}</b>
+                </p>
+              }
             </div>
 
             <div class="flex items-center gap-2 pt-1">
@@ -819,8 +850,8 @@ const PERMISSION_LABELS: { key: Permission; bn: string; en: string }[] = [
                   <input type="checkbox" [ngModel]="backup.autoBackup()" (ngModelChange)="toggleAutoBackup($event)"
                     [disabled]="!session.has('manageSettings') || !backup.cloudReady()" class="mt-0.5">
                   <span class="text-[11px] leading-relaxed">
-                    <span class="block font-bold text-slate-800 dark:text-slate-100">{{ prefs.txt('প্রতিদিন স্বয়ংক্রিয় ব্যাকআপ', 'Automatic daily backup') }}</span>
-                    <span class="block text-slate-500 dark:text-slate-400">{{ prefs.txt('দিনে একবার, অ্যাপ খোলা থাকলেই Cloudinary-তে নিজে থেকে ব্যাকআপ যাবে।', 'Once a day, while the app is open, a backup is uploaded to Cloudinary by itself.') }}</span>
+                    <span class="block font-bold text-slate-800 dark:text-slate-100">{{ prefs.txt('প্রতিদিন স্বয়ংক্রিয় ব্যাকআপ (ডিফল্টে চালু)', 'Automatic daily backup (on by default)') }}</span>
+                    <span class="block text-slate-500 dark:text-slate-400">{{ prefs.txt('দিনে একবার, অ্যাপ খোলা থাকলেই Cloudinary-তে নিজে থেকে ব্যাকআপ যাবে। বন্ধ করলে এই ডিভাইসে বন্ধ থাকবে।', 'Once a day, while the app is open, a backup is uploaded to Cloudinary by itself. Switching it off keeps it off on this device.') }}</span>
                   </span>
                 </label>
                 <p class="text-[10px] text-slate-500 dark:text-slate-400">
@@ -838,28 +869,54 @@ const PERMISSION_LABELS: { key: Permission; bn: string; en: string }[] = [
 
                 @if (backup.cloudFiles().length) {
                   <div class="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-                    <div class="bg-slate-50 dark:bg-slate-800 px-3 py-2 text-[10px] font-bold uppercase text-slate-600 dark:text-slate-300">{{ prefs.txt('Cloudinary-এর ব্যাকআপ', 'Cloudinary backups') }}</div>
+                    <div class="bg-slate-50 dark:bg-slate-800 px-3 py-2 text-[10px] font-bold uppercase text-slate-600 dark:text-slate-300 flex items-center justify-between">
+                      <span>{{ prefs.txt('Cloudinary-এর ব্যাকআপ', 'Cloudinary backups') }}</span>
+                      <span class="rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5">{{ backup.cloudFiles().length }}</span>
+                    </div>
                     <div class="divide-y divide-slate-100 dark:divide-slate-800 max-h-64 overflow-y-auto">
                       @for (f of backup.cloudFiles(); track f.id) {
-                        <div class="px-3 py-2 flex items-center justify-between gap-2 text-[11px]">
-                          <div class="min-w-0">
-                            <p class="font-semibold text-slate-800 dark:text-slate-100 truncate">{{ f.name }}</p>
-                            <p class="text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-1.5">
-                              <span>{{ f.createdAt | date:'dd-MM-yyyy HH:mm' }} · {{ (f.bytes / 1024).toFixed(0) }} KB</span>
-                              <span class="rounded px-1.5 py-0.5 text-[9px] font-bold"
-                                [class]="f.mode === 'full' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200'">
-                                {{ f.mode === 'full' ? prefs.txt('পুরনো — ছবি সহ', 'legacy — with images') : prefs.txt('শুধু JSON', 'JSON only') }}
-                              </span>
-                            </p>
+                        <div class="px-3 py-2 text-[11px]">
+                          <div class="flex items-center justify-between gap-2">
+                            <div class="min-w-0">
+                              <p class="font-semibold text-slate-800 dark:text-slate-100 truncate">{{ f.name }}</p>
+                              <p class="text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-1.5">
+                                <span>{{ f.createdAt | date:'dd-MM-yyyy HH:mm' }} · {{ (f.bytes / 1024).toFixed(0) }} KB</span>
+                                <span class="rounded px-1.5 py-0.5 text-[9px] font-bold"
+                                  [class]="f.mode === 'full' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200'">
+                                  {{ f.mode === 'full' ? prefs.txt('পুরনো — ছবি সহ', 'legacy — with images') : prefs.txt('শুধু JSON', 'JSON only') }}
+                                </span>
+                              </p>
+                            </div>
+                            <div class="flex items-center gap-1 shrink-0">
+                              <button (click)="downloadCloudBackup(f)" [disabled]="backup.job().busy || !session.has('manageSettings')"
+                                [title]="prefs.txt('এই কম্পিউটারে ডাউনলোড', 'Download to this computer')"
+                                class="bg-sky-100 hover:bg-sky-200 dark:bg-sky-900/50 dark:hover:bg-sky-900 text-sky-700 dark:text-sky-200 font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-40">
+                                <mat-icon class="text-xs">download</mat-icon>
+                              </button>
+                              <button (click)="startRenameBackup(f)" [disabled]="backup.job().busy || !session.has('manageSettings')"
+                                [title]="prefs.txt('নাম বদলান', 'Rename')"
+                                class="bg-violet-100 hover:bg-violet-200 dark:bg-violet-900/50 dark:hover:bg-violet-900 text-violet-700 dark:text-violet-200 font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-40">
+                                <mat-icon class="text-xs">edit</mat-icon>
+                              </button>
+                              <button (click)="restoreFromCloud(f)" [disabled]="backup.job().busy || !session.has('manageSettings')"
+                                class="bg-indigo-600 text-white font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-40">{{ prefs.txt('ফিরিয়ে আনুন', 'Restore') }}</button>
+                              <button (click)="forgetCloudBackup(f)" [disabled]="!session.has('manageSettings')" [title]="prefs.txt('তালিকা থেকে সরান', 'Remove from list')"
+                                class="bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-100 font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-40">
+                                <mat-icon class="text-xs">delete</mat-icon>
+                              </button>
+                            </div>
                           </div>
-                          <div class="flex items-center gap-1 shrink-0">
-                            <button (click)="restoreFromCloud(f)" [disabled]="backup.job().busy || !session.has('manageSettings')"
-                              class="bg-indigo-600 text-white font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-40">{{ prefs.txt('ফিরিয়ে আনুন', 'Restore') }}</button>
-                            <button (click)="forgetCloudBackup(f)" [disabled]="!session.has('manageSettings')" [title]="prefs.txt('তালিকা থেকে সরান', 'Remove from list')"
-                              class="bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-100 font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer disabled:opacity-40">
-                              <mat-icon class="text-xs">delete</mat-icon>
-                            </button>
-                          </div>
+                          @if (renamingBackupId() === f.id) {
+                            <div class="mt-2 flex items-center gap-1.5">
+                              <input [(ngModel)]="renameBackupText" (keyup.enter)="saveRenameBackup()" (keyup.escape)="cancelRenameBackup()"
+                                [placeholder]="prefs.txt('নতুন নাম (যেমন: নভেম্বর-মাস-শেষ.json)', 'New name (e.g. november-month-end.json)')"
+                                class="flex-1 min-w-0 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-1.5 text-[11px] text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-400" />
+                              <button (click)="saveRenameBackup()"
+                                class="bg-violet-600 hover:bg-violet-700 text-white font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer">{{ prefs.txt('সেভ', 'Save') }}</button>
+                              <button (click)="cancelRenameBackup()"
+                                class="bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-100 font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer">{{ prefs.txt('বাতিল', 'Cancel') }}</button>
+                            </div>
+                          }
                         </div>
                       }
                     </div>
@@ -873,6 +930,9 @@ const PERMISSION_LABELS: { key: Permission; bn: string; en: string }[] = [
                   </p>
                   <p>
                     {{ prefs.txt('ফাইলে শুধু JSON ডাটা থাকে; ছবি রেকর্ডের ভেতরে Cloudinary লিংক হিসেবে থাকে — তাই ব্যাকআপ ছোট ও দ্রুত হয়। এই JSON ফাইলটি "ফাইল ব্যাকআপ" ট্যাবের রিস্টোর ঘর দিয়ে যেকোনো সময় ইমপোর্ট করা যাবে।', 'The file holds JSON data only; images stay as Cloudinary links inside the records, so backups stay small and fast. The same JSON can be imported any time through the restore box on the File backup tab.') }}
+                  </p>
+                  <p>
+                    {{ prefs.txt('প্রতিটি ফাইলে ✓ ডাউনলোড করে কম্পিউটারে রাখা যাবে, ✎ দিয়ে তালিকায় নাম বদলানো যাবে (Cloudinary-র ভেতরের ফাইলের নাম আলাদা থাকবে), আর "ফিরিয়ে আনুন" দিয়ে সেই ব্যাকআপ রিস্টোর করা যাবে। তালিকায় সর্বশেষ ৬০টি ব্যাকআপ রাখা হয়; পুরোনো নথিগুলো Cloudinary-তেই থাকে।', 'Each file can be ✓ downloaded to this computer, ✎ renamed in the list (the Cloudinary asset keeps its own name), and restored with "Restore". The list keeps the newest 60 backups; older files stay in Cloudinary.') }}
                   </p>
                   <p>
                     {{ prefs.txt('তালিকাটি Supabase-এর সাথে সিঙ্ক হয়, তাই যেকোনো ডিভাইস থেকে রিস্টোর করা যাবে। লিস্ট থেকে মুছে ফেললেও Cloudinary-র ফাইলটি মুছে যায় না — Console → Media Library →', 'The list syncs through Supabase, so any device can restore. Removing a row does not delete the asset — use Console → Media Library →') }}
@@ -1277,6 +1337,11 @@ export class Settings {
 
   permissionRows = PERMISSION_LABELS;
 
+  readonly isMainUser = computed(() => {
+    const user = this.session.currentUser();
+    return !!user && this.session.isMain(user);
+  });
+
   themeModes: { key: ThemeMode; bn: string; en: string; hintBn: string; hintEn: string; icon: string }[] = [
     { key: 'light', bn: 'লাইট', en: 'Light', hintBn: 'দিনের আলোয় উজ্জ্বল ও পরিষ্কার', hintEn: 'Bright and crisp for daytime', icon: 'light_mode' },
     { key: 'dark', bn: 'ডার্ক', en: 'Dark', hintBn: 'রাতে চোখের আরাম', hintEn: 'Gentle on the eyes at night', icon: 'dark_mode' },
@@ -1490,6 +1555,8 @@ export class Settings {
   }
 
   readonly resetOpen = signal(false);
+  readonly renamingBackupId = signal('');
+  renameBackupText = '';
   readonly hardResetWord = signal('');
   readonly hardResetBusy = signal(false);
   readonly hardResetMessage = signal('');
@@ -1655,7 +1722,15 @@ export class Settings {
   }
 
   saveBusiness() {
-    this.dataService.updateVoucherSettings({ ...this.business });
+    const locks = {
+      lockPartyMoney: this.dataService.voucherSettings().lockPartyMoney,
+      lockStock: this.dataService.voucherSettings().lockStock
+    };
+    this.dataService.updateVoucherSettings({
+      ...this.business,
+      // Only the owner may flip the locks, even if a staff settings screen has a stale copy.
+      ...(this.isMainUser() ? {} : locks)
+    });
     this.session.log('Settings Changed', this.prefs.txt('ব্যবসার তথ্য ও ইনভয়েস সেটিংস আপডেট হয়েছে', 'Business info and invoice settings updated'));
     this.savedMsg.set(true);
     setTimeout(() => this.savedMsg.set(false), 2500);
@@ -1892,7 +1967,13 @@ export class Settings {
   }
 
   resetBusiness() {
+    // A reset never silently unlocks the owner's security locks.
+    const locks = {
+      lockPartyMoney: this.dataService.voucherSettings().lockPartyMoney,
+      lockStock: this.dataService.voucherSettings().lockStock
+    };
     this.dataService.resetVoucherSettings();
+    this.dataService.updateVoucherSettings(locks);
     this.business = { ...this.dataService.voucherSettings() };
     this.session.log('Settings Reset', this.prefs.txt('ইনভয়েস সেটিংস ডিফল্টে ফিরিয়ে নেওয়া হয়েছে', 'Invoice settings reset to defaults'));
   }
@@ -2114,6 +2195,44 @@ export class Settings {
     if (!this.session.has('manageSettings')) return;
     const count = this.backup.listBackups().length;
     this.notify.info(this.prefs.txt(`${count} টি ব্যাকআপ তালিকায় আছে।`, `${count} backups in the list.`));
+  }
+
+  async downloadCloudBackup(file: CloudBackupEntry) {
+    if (!this.session.has('manageSettings')) return;
+    try {
+      const saved = await this.backup.downloadFile(file);
+      this.notify.success(this.prefs.txt(`${saved.name} এই কম্পিউটারে ডাউনলোড হয়েছে।`, `${saved.name} downloaded to this computer.`));
+    } catch (error) {
+      this.notify.error(this.messageOf(error), this.prefs.txt('ডাউনলোড ব্যর্থ', 'Download failed'));
+    }
+  }
+
+  startRenameBackup(file: CloudBackupEntry) {
+    if (!this.session.has('manageSettings')) return;
+    this.renameBackupText = file.name;
+    this.renamingBackupId.set(file.id);
+  }
+
+  cancelRenameBackup() {
+    this.renamingBackupId.set('');
+    this.renameBackupText = '';
+  }
+
+  saveRenameBackup() {
+    if (!this.session.has('manageSettings')) return;
+    const file = this.backup.cloudFiles().find(item => item.id === this.renamingBackupId());
+    if (!file) {
+      this.cancelRenameBackup();
+      return;
+    }
+    try {
+      const updated = this.backup.renameEntry(file, this.renameBackupText);
+      this.session.log('Cloud Backup', this.prefs.txt(`${file.name} → ${updated.name} নাম বদলানো হয়েছে`, `${file.name} renamed to ${updated.name}`));
+      this.notify.success(this.prefs.txt(`নাম বদলে "${updated.name}" হয়েছে।`, `Renamed to "${updated.name}".`));
+      this.cancelRenameBackup();
+    } catch (error) {
+      this.notify.error(this.messageOf(error), this.prefs.txt('নাম বদলানো যায়নি', 'Rename failed'));
+    }
   }
 
   async restoreFromCloud(file: CloudBackupEntry) {

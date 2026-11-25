@@ -7,6 +7,7 @@ import { NotificationService } from '../../services/notification';
 import { PreferencesService } from '../../services/preferences';
 import { isWarrantyCancelled, isWarrantyCompleted } from '../../utils/warranty';
 import { qrDataUrl } from '../../utils/qr-code';
+import { localizeAddress } from '../../utils/bd-geo';
 import { saleQrText } from '../../utils/voucher-qr';
 import { saleItemDisplayName } from '../../utils/sale-item-label';
 import { findProductForLine } from '../../utils/report-analytics';
@@ -223,6 +224,7 @@ export function planInvoicePages(
     .sp-num { text-align: right !important; white-space: nowrap; }
     .sp-items { border: 1px solid #cbd5d5; color: #000; font-size: 12px; font-weight: 900; margin-top: -7px; }
     .sp-items td { height: 29px; }
+    .sp-invoice.sp-grid .sp-items th, .sp-invoice.sp-grid .sp-items td { border: 1px solid #cbd5d5; }
     .sp-sum { font-weight: bold; background: #f3f7f6; }
     .sp-split { display: flex; gap: 12px; align-items: flex-start; }
     .sp-left { width: 55%; }
@@ -447,7 +449,7 @@ export function planInvoicePages(
 
           <!-- One invoice body shared by every printed page and the hidden measurer. -->
           <ng-template #invoiceTpl let-page let-copyLabel="copyLabel">
-            <div class="sp-invoice printable-area" [style.width.px]="sheet().designW" [style.min-height.px]="sheet().designH" [style.padding.px]="sheet().margin" [style.transform]="'scale(' + pageScale(page) + ')'" [style.--v-accent]="settings().accentColor" [style.font-family]="fontStack()">
+            <div class="sp-invoice printable-area" [class.sp-grid]="settings().showColumnBorders" [style.width.px]="sheet().designW" [style.min-height.px]="sheet().designH" [style.padding.px]="sheet().margin" [style.transform]="'scale(' + pageScale(page) + ')'" [style.--v-accent]="settings().accentColor" [style.font-family]="fontStack()">
               @if (copyLabel) {
                 <div class="sp-copy-tag">{{ copyLabel }}</div>
               }
@@ -511,7 +513,7 @@ export function planInvoicePages(
                   <p>Name: {{ currentSale().customerName }}</p>
                   <p>Mobile: {{ customerMobile() || '—' }}</p>
                   @if (currentSale().address) {
-                    <p>Address: {{ currentSale().address }}</p>
+                    <p>Address: {{ saleAddress() }}</p>
                   }
                 </div>
                 <div class="sp-right sp-customer-meta">
@@ -881,6 +883,9 @@ export class InvoiceModal implements OnInit, AfterViewChecked, OnDestroy {
   viewMode = input(false);
 
   currentSale = signal<Sale>({} as Sale);
+
+  /** Stored region names are English; the voucher prints them in the reader's language. */
+  readonly saleAddress = computed(() => localizeAddress(this.currentSale().address, this.prefs.language()));
 
   // Global Voucher Settings from DataService
   readonly settings = this.dataService.voucherSettings;
@@ -1327,13 +1332,21 @@ export class InvoiceModal implements OnInit, AfterViewChecked, OnDestroy {
     this.runVoucherJob(runner, `${kind.toUpperCase()} ফাইল তৈরি করা যায়নি।`, `${kind.toUpperCase()} export failed`);
   }
 
-  private runVoucherJob(runner: (target: VoucherPrintTarget) => Promise<void>, messageBn: string, messageEn: string) {
+  private runVoucherJob(runner: (target: VoucherPrintTarget) => Promise<void | number>, messageBn: string, messageEn: string) {
     const host = this.host.nativeElement as HTMLElement;
     const paperEls = Array.from(host.querySelectorAll('.voucher-print-paper')) as HTMLElement[];
     if (!paperEls.length) return;
     const invoice = this.currentSale().invoice;
     this.exporting.set(true);
     runner({ paperEl: paperEls[0], paperEls, sheet: this.sheet(), fileName: `Invoice_${invoice}`, title: `Sales Invoice ${invoice}` })
+      .then(saved => {
+        if (typeof saved === 'number' && saved > 1) {
+          this.notify.info(this.prefs.txt(
+            `${saved}টি পেজের ছবি ডাউনলোড হচ্ছে — ব্রাউজার একাধিক ফাইল অনুমতি চাইলে Allow চাপুন।`,
+            `${saved} page images are downloading — allow multiple downloads if the browser asks.`
+          ));
+        }
+      })
       .catch(err => {
         console.error(messageEn, err);
         this.notify.error(this.prefs.txt(messageBn, messageEn), messageEn);

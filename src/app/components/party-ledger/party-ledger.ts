@@ -9,6 +9,7 @@ import {
 } from '../../services/data';
 import { SessionService } from '../../services/session';
 import { PreferencesService } from '../../services/preferences';
+import { localizeAddress } from '../../utils/bd-geo';
 import { localDateIso } from '../../utils/local-date';
 import { DmyDateDirective } from '../../directives/dmy-date.directive';
 import { PartyStatement } from '../party-statement/party-statement';
@@ -270,7 +271,7 @@ const PROFILE_ROWS = 25;
               <div class="flex min-w-0 items-center gap-2">
                 <span class="hidden text-[10px] text-slate-400 sm:inline">{{ prefs.txt('সারিতে ক্লিক করে বিস্তারিত দেখুন', 'Click a row for details') }}</span>
                 @if (dash(party().address)) {
-                  <span class="max-w-[45%] truncate text-[10px] text-slate-500">{{ dash(party().address) }}</span>
+                  <span class="max-w-[45%] truncate text-[10px] text-slate-500">{{ loc(dash(party().address)) }}</span>
                 }
               </div>
             </div>
@@ -334,7 +335,7 @@ const PROFILE_ROWS = 25;
                         <td class="p-2 text-center">
                           @if (row.payment) {
                             <span class="inline-flex items-center gap-1">
-                              @if (isAdmin() && !row.payment.batteryFundTransferId) {
+                              @if (canEditMoney() && !row.payment.batteryFundTransferId) {
                                 <button (click)="$event.stopPropagation(); openEditPayment(row.payment!)" class="text-slate-400 hover:text-amber-600" [title]="prefs.txt('পেমেন্ট সংশোধন (অ্যাডমিন পিন)', 'Edit payment (admin PIN)')">
                                   <mat-icon class="text-sm">edit</mat-icon>
                                 </button>
@@ -422,7 +423,7 @@ const PROFILE_ROWS = 25;
                       <div class="shrink-0 text-right">
                         <p class="font-mono text-sm font-black text-emerald-700">+{{ row.amount | number:'1.2-2' }}</p>
                         <p class="text-[9px] text-slate-400">TK</p>
-                        @if (row.payment && isAdmin() && !row.payment.batteryFundTransferId) {
+                        @if (row.payment && canEditMoney() && !row.payment.batteryFundTransferId) {
                           <button (click)="openEditPayment(row.payment!)" class="mt-0.5 text-slate-400 hover:text-amber-600" [title]="prefs.txt('পেমেন্ট সংশোধন (অ্যাডমিন পিন)', 'Edit payment (admin PIN)')">
                             <mat-icon class="text-xs">edit</mat-icon>
                           </button>
@@ -860,7 +861,7 @@ const PROFILE_ROWS = 25;
           </div>
 
           <div class="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2">
-            @if (row.payment && isAdmin() && !row.payment.batteryFundTransferId) {
+            @if (row.payment && canEditMoney() && !row.payment.batteryFundTransferId) {
               <button (click)="openEditPayment(row.payment!)" class="flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-600">
                 <mat-icon class="text-xs">edit</mat-icon> {{ prefs.txt('সংশোধন', 'Edit') }}
               </button>
@@ -1029,7 +1030,21 @@ export class PartyLedger implements OnInit {
   /** Receipt being corrected; null while recording a new payment. */
   editingPayment = signal<LedgerPayment | null>(null);
   showEditPin = signal<boolean>(false);
+
+  private moneyGrantedByPermission(): boolean {
+    const user = this.session.currentUser();
+    return !!user && Array.isArray(user.permissions) && user.permissions.includes('editPartyMoney');
+  }
   readonly isAdmin = computed(() => this.session.currentUser()?.role === 'Admin');
+
+  /** The owner lock blocks receipt corrections even for Admin accounts. */
+  readonly canEditMoney = computed(() => {
+    const user = this.session.currentUser();
+    if (!user) return false;
+    if (this.session.isMain(user)) return true;
+    if (this.dataService.voucherSettings().lockPartyMoney) return false;
+    return user.role === 'Admin' || this.session.has('editPartyMoney');
+  });
   showReturn = signal<boolean>(false);
   showStatement = signal<boolean>(false);
   receipt = signal<LedgerPayment | null>(null);
@@ -1184,12 +1199,16 @@ export class PartyLedger implements OnInit {
     return [this.dash(p.companyName), this.dash(p.zone), this.dash(p.inHand)].filter(Boolean).join(' · ');
   }
 
+  loc(value?: string): string {
+    return localizeAddress(value, this.prefs.language());
+  }
+
   location(): string {
     const p = this.party();
     const parts = [p.areaRoadHouse, p.thana, p.upazila, p.district, p.division]
       .map(value => this.dash(value))
       .filter(Boolean);
-    return Array.from(new Set(parts)).join(', ');
+    return localizeAddress(Array.from(new Set(parts)).join(', '), this.prefs.language());
   }
 
   memberSince(): string {
@@ -1207,12 +1226,12 @@ export class PartyLedger implements OnInit {
       { label: this.prefs.txt('স্ট্যাটাস', 'Status'), value: clean(p.status) },
       { label: this.prefs.txt('ফোন', 'Phone'), value: partyPhones(p).join(', ') },
       { label: this.prefs.txt('ইমেইল', 'Email'), value: clean(p.email) },
-      { label: this.prefs.txt('ঠিকানা', 'Address'), value: clean(p.address) },
-      { label: this.prefs.txt('বিভাগ', 'Division'), value: clean(p.division) },
-      { label: this.prefs.txt('জেলা', 'District'), value: clean(p.district) },
-      { label: this.prefs.txt('উপজেলা', 'Upazila'), value: clean(p.upazila) },
-      { label: this.prefs.txt('থানা', 'Thana'), value: clean(p.thana) },
-      { label: this.prefs.txt('এলাকা', 'Area'), value: clean(p.areaRoadHouse) },
+      { label: this.prefs.txt('ঠিকানা', 'Address'), value: this.loc(clean(p.address)) },
+      { label: this.prefs.txt('বিভাগ', 'Division'), value: this.loc(clean(p.division)) },
+      { label: this.prefs.txt('জেলা', 'District'), value: this.loc(clean(p.district)) },
+      { label: this.prefs.txt('উপজেলা', 'Upazila'), value: this.loc(clean(p.upazila)) },
+      { label: this.prefs.txt('থানা', 'Thana'), value: this.loc(clean(p.thana)) },
+      { label: this.prefs.txt('এলাকা', 'Area'), value: this.loc(clean(p.areaRoadHouse)) },
       { label: this.prefs.txt('জোন', 'Zone'), value: clean(p.zone) },
       { label: this.prefs.txt('ওয়্যারহাউস', 'Warehouse'), value: clean(p.warehouse) },
       { label: this.prefs.txt('হাতে', 'In Hand'), value: clean(p.inHand) },
@@ -1514,7 +1533,7 @@ export class PartyLedger implements OnInit {
 
   /** Admin-only correction of an already recorded receipt; saving asks for the admin PIN. */
   openEditPayment(payment: LedgerPayment) {
-    if (!this.isAdmin()) return;
+    if (!this.canEditMoney()) return;
     this.selectedRow.set(null);
     this.editingPayment.set(payment);
     this.payAmount = payment.amount;
@@ -1555,7 +1574,9 @@ export class PartyLedger implements OnInit {
     }
     if (this.editingPayment()) {
       this.formError.set('');
-      this.showEditPin.set(true);
+      // An explicit party-money grant edits directly; everyone else still enters the admin PIN.
+      if (this.moneyGrantedByPermission()) this.confirmEditPayment();
+      else this.showEditPin.set(true);
       return;
     }
     const discount = Number(this.payDiscount) || 0;
@@ -1584,7 +1605,7 @@ export class PartyLedger implements OnInit {
   confirmEditPayment() {
     const old = this.editingPayment();
     this.showEditPin.set(false);
-    if (!old || !this.isAdmin()) return;
+    if (!old || !this.canEditMoney()) return;
     const amount = Number(this.payAmount) || 0;
     if (amount <= 0) {
       this.formError.set(this.prefs.t('ledger.invalidAmount'));

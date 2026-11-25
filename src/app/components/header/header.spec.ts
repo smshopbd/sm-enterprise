@@ -8,11 +8,14 @@ import { LoadingService } from '../../services/loading';
 import { NotificationService } from '../../services/notification';
 import { PreferencesService } from '../../services/preferences';
 import { SessionService } from '../../services/session';
+import { CloudService } from '../../services/cloud';
 
 function setup() {
   const warehouses = signal(['Main Warehouse', 'Branch A', 'Branch B']);
   const lowStockProducts = signal<{ id: number; name: string; stock: number; minQty?: number }[]>([]);
   const log = vi.fn();
+  const pendingRows = signal(0);
+  const retryNow = vi.fn(async () => undefined);
   TestBed.configureTestingModule({ providers: [
     { provide: DataService, useValue: { warehouses, lowStockProducts, addExpense: vi.fn() } },
     {
@@ -46,10 +49,20 @@ function setup() {
       }
     },
     { provide: LoadingService, useValue: { syncing: signal(false), online: signal(true) } },
+    {
+      provide: CloudService,
+      useValue: {
+        pendingRows,
+        retryNow,
+        status: signal('online'),
+        statusMessage: signal(''),
+        config: signal({})
+      }
+    },
     { provide: Router, useValue: { navigate: vi.fn() } }
   ] });
   const component = TestBed.runInInjectionContext(() => new Header());
-  return { component, warehouses, lowStockProducts, log };
+  return { component, warehouses, lowStockProducts, log, pendingRows, retryNow };
 }
 
 describe('Header warehouse search', () => {
@@ -91,6 +104,20 @@ describe('Header warehouse search', () => {
     expect(component.showWarehouseDropdown()).toBe(false);
     expect(component.warehouseQuery()).toBe('');
     expect(component.selectedWarehouse()).toBe('SM Warehouse');
+  });
+});
+
+describe('Header pending uploads', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  it('shows pending rows and retries them from the header', async () => {
+    const { component, pendingRows, retryNow } = setup();
+    pendingRows.set(3);
+
+    expect(component.pendingSyncTitle()).toContain('3 saved records');
+    await component.retrySync();
+    expect(retryNow).toHaveBeenCalledTimes(1);
+    expect(component.retryingSync()).toBe(false);
   });
 });
 

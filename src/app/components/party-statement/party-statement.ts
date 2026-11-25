@@ -4,6 +4,7 @@ import * as htmlToImage from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { DataService, Party, PartySide, PartySideAccount, partyPhones, partyRoles } from '../../services/data';
 import { PreferencesService } from '../../services/preferences';
+import { localizeAddress } from '../../utils/bd-geo';
 import { NotificationService } from '../../services/notification';
 import { localDateIso } from '../../utils/local-date';
 
@@ -422,7 +423,7 @@ export class PartyStatement {
     const parts = [p.areaRoadHouse, p.thana, p.upazila, p.district, p.division]
       .map(value => this.clean(value))
       .filter(Boolean);
-    return Array.from(new Set(parts)).join(', ') || this.clean(p.address);
+    return localizeAddress(Array.from(new Set(parts)).join(', ') || this.clean(p.address), this.prefs.language());
   });
 
   readonly memberSince = computed(() => {

@@ -137,6 +137,15 @@ import { CloudService } from '../../services/cloud';
             <span class="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse"></span>
             <span class="hidden sm:inline">{{ prefs.txt('সিঙ্ক', 'Sync') }}</span>
           </span>
+        } @else if (cloud.pendingRows() > 0) {
+          <button (click)="retrySync()" [disabled]="retryingSync()"
+            class="inline-flex items-center gap-1 px-1.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-[10px] font-bold text-amber-700 dark:text-amber-300 disabled:opacity-60 cursor-pointer"
+            [title]="pendingSyncTitle()"
+            [attr.aria-label]="pendingSyncTitle()">
+            <mat-icon class="text-xs">cloud_upload</mat-icon>
+            <span class="font-mono">{{ cloud.pendingRows() > 99 ? '99+' : cloud.pendingRows() }}</span>
+            <span class="hidden xl:inline">{{ prefs.txt('আপলোড বাকি', 'pending') }}</span>
+          </button>
         } @else if (!loading.online()) {
           <span class="inline-flex items-center gap-1 px-1.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-[10px] font-bold text-amber-700 dark:text-amber-300"
             [title]="syncProblem() || prefs.txt('ক্লাউডে সংযোগ হচ্ছে না — লোকাল ডেটা নিরাপদ', 'Cloud offline — local data is safe')"
@@ -298,11 +307,20 @@ export class Header implements OnInit, OnDestroy {
   session = inject(SessionService);
   prefs = inject(PreferencesService);
   loading = inject(LoadingService);
-  private cloud = inject(CloudService);
+  cloud = inject(CloudService);
   private router = inject(Router);
 
   /** The reason behind the sync chip, so a stuck upload can be inspected without a popup. */
   readonly syncProblem = computed(() => this.cloud.status() === 'error' ? this.cloud.statusMessage() : '');
+  readonly pendingSyncTitle = computed(() => {
+    const count = this.cloud.pendingRows();
+    const message = this.prefs.txt(
+      `${count}টি সংরক্ষিত ডেটা ক্লাউডে আপলোড বাকি — আবার চেষ্টা করতে চাপুন`,
+      `${count} saved records are pending upload — tap to retry`
+    );
+    return this.syncProblem() ? `${message} — ${this.syncProblem()}` : message;
+  });
+  readonly retryingSync = signal(false);
 
   /** Server timestamp of the newest row, so the header shows how fresh the shop is. */
   readonly lastUpdateText = computed(() => {
@@ -393,6 +411,16 @@ export class Header implements OnInit, OnDestroy {
     this.showProfile.set(false);
     this.showWarehouseDropdown.set(false);
     this.warehouseQuery.set('');
+  }
+
+  async retrySync(): Promise<void> {
+    if (this.retryingSync()) return;
+    this.retryingSync.set(true);
+    try {
+      await this.cloud.retryNow();
+    } finally {
+      this.retryingSync.set(false);
+    }
   }
 
   async openGlobalSearch() {

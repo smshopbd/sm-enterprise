@@ -53,8 +53,10 @@ import {
     .bv-account td:first-child { width: 62%; }
     .bv-account .bv-final td { background: var(--v-accent, #087d6c); color: #fff; font-weight: 700; font-size: 12px; }
     .bv-profit td { color: #087d6c; font-weight: 700; }
-    .bv-sign { display: flex; justify-content: space-between; margin-top: auto; padding-top: 60px; font-size: 11px; }
-    .bv-sign span { border-top: 1px solid #849295; padding: 6px 18px; }
+    .bv-sign { display: flex; justify-content: space-between; align-items: flex-end; margin-top: auto; padding-top: 60px; font-size: 11px; }
+    .bv-sign > span { border-top: 1px solid #849295; padding: 6px 18px; }
+    .bv-sign-approve { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; }
+    .bv-sign-img { max-height: 44px; max-width: 160px; object-fit: contain; margin-bottom: 5px; filter: grayscale(1); }
     .bv-footer { border-top: 1px solid #cbd5d5; margin-top: 10px; padding-top: 5px; font-size: 10px; color: #596770; text-align: center; }
     .voucher-print-scaler { margin: 0 auto; }
     .voucher-print-paper { background: #fff; display: grid; box-sizing: border-box; overflow: hidden; transform-origin: top left; box-shadow: 0 14px 34px rgba(15,23,42,.2); }
@@ -81,6 +83,11 @@ import {
               <span class="font-extrabold text-sm text-slate-800 font-mono">{{ typeLabel() }} · {{ v.voucherNo }}</span>
             </div>
             <div class="flex items-center gap-2 text-xs">
+              @if (canEdit()) {
+                <button (click)="edit.emit()" class="bg-amber-500 hover:bg-amber-600 text-white font-bold px-2.5 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer">
+                  <mat-icon class="text-xs">edit_note</mat-icon> {{ prefs.txt('এডিট', 'Edit') }}
+                </button>
+              }
               <button (click)="isSettingsOpen.set(true)" class="bg-slate-800 hover:bg-slate-900 text-white font-bold px-2.5 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer">
                 <mat-icon class="text-xs">tune</mat-icon> {{ prefs.txt('সেটিংস', 'Settings') }}
               </button>
@@ -244,7 +251,12 @@ import {
 
                         <div class="bv-sign">
                           <span>{{ prefs.txt('গ্রাহক / বিক্রেতার স্বাক্ষর', 'Customer / Seller signature') }}</span>
-                          <span>{{ settings().signatureTitle }}</span>
+                          <span class="bv-sign-approve">
+                            @if (settings().showSignatureImage && settings().signatureImage) {
+                              <img class="bv-sign-img" [src]="settings().signatureImage" alt="Authorized signature" />
+                            }
+                            {{ settings().signatureTitle }}
+                          </span>
                         </div>
                         <div class="bv-footer">{{ settings().businessNamePart1 }} {{ settings().businessNamePart2 }} · {{ prefs.txt('পুরাতন ব্যাটারি ম্যানেজমেন্ট', 'Old Battery Management') }}</div>
                       </div>
@@ -269,7 +281,9 @@ export class BatteryVoucherComponent implements AfterViewChecked, OnDestroy {
   prefs = inject(PreferencesService);
 
   voucher = input<BatteryVoucher | null>(null);
+  canEdit = input(true);
   close = output<void>();
+  edit = output<void>();
 
   readonly settings = this.dataService.voucherSettings;
   readonly isSettingsOpen = signal(false);
@@ -372,7 +386,7 @@ export class BatteryVoucherComponent implements AfterViewChecked, OnDestroy {
     this.runVoucherJob(runner, `${kind.toUpperCase()} ফাইল তৈরি করা যায়নি।`, `${kind.toUpperCase()} export failed`);
   }
 
-  private runVoucherJob(runner: (target: VoucherPrintTarget) => Promise<void>, bn: string, en: string) {
+  private runVoucherJob(runner: (target: VoucherPrintTarget) => Promise<void | number>, bn: string, en: string) {
     const paperEl = this.host.nativeElement.querySelector('.voucher-print-paper') as HTMLElement | null;
     const v = this.voucher();
     if (!paperEl || !v) return;

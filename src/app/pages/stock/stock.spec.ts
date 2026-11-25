@@ -40,12 +40,16 @@ function setup(role: 'Admin' | 'Salesman', overrides: Partial<Product> = {}) {
         stockValueSales: () => 0,
         stockAdjustments: adjustments,
         adjustProductStock: adjust,
+        voucherSettings: signal({ lockStock: false, lockPartyMoney: false }),
         exportToExcel: vi.fn()
       }
     },
     { provide: NotificationService, useValue: { success, error: vi.fn(), confirm: vi.fn() } },
     { provide: PreferencesService, useValue: { txt: (_bn: string, en: string) => en } },
-    { provide: SessionService, useValue: { currentUser: signal({ id: 1, name: 'Tester', username: 'tester', role }), log } }
+    { provide: SessionService, useValue: {
+      currentUser: signal({ id: 1, name: 'Tester', username: 'tester', role }),
+      isMain: () => false, has: () => false, log
+    } }
   ] });
   const component = TestBed.runInInjectionContext(() => new Stock());
   return { component, products, adjust, log, success };
@@ -59,7 +63,7 @@ describe('Stock reconciliation page', () => {
   it('ignores open and save attempts from a non-admin', () => {
     const { component, adjust } = setup('Salesman');
     component.openAdjust(component.dataService.products()[0]);
-    expect(component.isAdmin()).toBe(false);
+    expect(component.canEditStock()).toBe(false);
     expect(component.adjustOpen()).toBe(false);
     component.saveAdjustment();
     expect(adjust).not.toHaveBeenCalled();

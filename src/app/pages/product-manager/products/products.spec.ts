@@ -38,13 +38,14 @@ function setup(purchases: Purchase[], params: Record<string, string> = {}, sales
       provide: DataService, useValue: {
         products: signal<Product[]>([battery]),
         purchases: signal<Purchase[]>(purchases),
-        sales: signal<Sale[]>(sales)
+        sales: signal<Sale[]>(sales),
+        voucherSettings: signal({ lockStock: false, lockPartyMoney: false })
       }
     },
     { provide: ActivatedRoute, useValue: { queryParamMap: of(convertToParamMap(params)) } },
     { provide: PreferencesService, useValue: { txt: (_bn: string, en: string) => en } },
     { provide: NotificationService, useValue: {} },
-    { provide: SessionService, useValue: { log: () => undefined } },
+    { provide: SessionService, useValue: { log: () => undefined, currentUser: signal({ role: 'Admin' } as never), isMain: () => false, has: () => false } },
     { provide: MediaService, useValue: {} }
   ] });
   return TestBed.runInInjectionContext(() => new Products());
@@ -216,13 +217,14 @@ describe('Product edit stock', () => {
         provide: DataService, useValue: {
           products: signal<Product[]>([existing]),
           updateProduct: (product: Product) => { saved.push(product); },
-          addProduct: (product: Product) => { saved.push(product); }
+          addProduct: (product: Product) => { saved.push(product); },
+          voucherSettings: signal({ lockStock: false, lockPartyMoney: false })
         }
       },
       { provide: ActivatedRoute, useValue: { queryParamMap: of(convertToParamMap({})) } },
       { provide: PreferencesService, useValue: { txt: (_bn: string, en: string) => en } },
       { provide: NotificationService, useValue: { toast: () => undefined } },
-      { provide: SessionService, useValue: { log: () => undefined } },
+      { provide: SessionService, useValue: { log: () => undefined, currentUser: signal({ role: 'Admin' } as never), isMain: () => false, has: () => false } },
       { provide: MediaService, useValue: {} }
     ] });
     const component = TestBed.runInInjectionContext(() => new Products());

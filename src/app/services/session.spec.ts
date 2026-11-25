@@ -1,7 +1,8 @@
 import '@angular/compiler';
 import { getTestBed, TestBed } from '@angular/core/testing';
 import { BrowserTestingModule, platformBrowserTesting } from '@angular/platform-browser/testing';
-import { hashSecret, sha256Hex, verifySecret } from '../utils/secret';
+import { cloudKeyHash, deriveCloudKey, hashSecret, sha256Hex, verifySecret } from '../utils/secret';
+import { CLOUD_KEY_STORAGE, CloudService } from './cloud';
 import { OrderLockService } from './order-lock';
 import {
   AUDIT_KEY, LEGACY_AUDIT_KEY, MAIN_ADMIN, SESSION_KEY, SessionService, USERS_KEY, auditCategoryOf,
@@ -405,5 +406,104 @@ describe('category audit trail', () => {
     session.clearAudit();
     expect(session.auditLogs()).toEqual([]);
     expect(storage.values.get(AUDIT_KEY)).toEqual([]);
+  });
+});
+
+describe('fresh database claim on reload', () => {
+  class FakeCloud {
+    key = '';
+    claimed: boolean | null = false;
+    enabled = true;
+    claims = 0;
+    pushes = 0;
+    syncStarts = 0;
+
+    constructor(private mirror: MemoryStorage) {}
+
+    isEnabled(): boolean { return this.enabled; }
+    hasUserKey(): boolean { return !!this.key; }
+    userKey(): string { return this.key; }
+    setUserKey(key: string): void { this.key = key; this.mirror.values.set(CLOUD_KEY_STORAGE, key); }
+    clearUserKey(): void { this.key = ''; this.mirror.values.delete(CLOUD_KEY_STORAGE); }
+    async isClaimed(): Promise<boolean | null> { return this.claimed; }
+    async probeKey(): Promise<boolean> { return this.claimed === true; }
+    async claimAccount(): Promise<boolean> { this.claims++; this.claimed = true; return true; }
+    pushAll(): Promise<never> { this.pushes++; return Promise.resolve({} as never); }
+    startSync(): void { this.syncStarts++; }
+  }
+
+  async function flush(): Promise<void> {
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+  }
+
+  function withCloud(): FakeCloud {
+    const cloud = new FakeCloud(storage);
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [{ provide: StorageService, useValue: storage }, { provide: CloudService, useValue: cloud }]
+    });
+    session = TestBed.inject(SessionService);
+    return cloud;
+  }
+
+  it('claims an unclaimed backend with the stored key and uploads the shop', async () => {
+    const cloud = withCloud();
+    storage.values.set(USERS_KEY, [
+      { ...owner, cloudHash: cloudKeyHash(deriveCloudKey(password)) }, salesman
+    ]);
+    session.load();
+    await login();
+    expect(cloud.claims).toBe(1);
+
+    // Reload after migrating to a brand-new project: login and key survive,
+    // but no account row exists on the server yet.
+    cloud.claimed = false;
+    cloud.claims = 0;
+    cloud.pushes = 0;
+    cloud.syncStarts = 0;
+    session.load();
+    await flush();
+
+    expect(cloud.claims).toBe(1);
+    expect(cloud.pushes).toBe(1);
+    expect(cloud.syncStarts).toBe(1);
+  });
+
+  it('never claims with a key that does not match the stored main admin hash', async () => {
+    const cloud = withCloud();
+    storage.values.set(USERS_KEY, [
+      { ...owner, cloudHash: cloudKeyHash(deriveCloudKey(password)) }, salesman
+    ]);
+    session.load();
+    await login();
+
+    cloud.claimed = false;
+    cloud.claims = 0;
+    cloud.pushes = 0;
+    cloud.syncStarts = 0;
+    storage.values.set(CLOUD_KEY_STORAGE, 'a'.repeat(64));
+    session.load();
+    await flush();
+
+    expect(cloud.claims).toBe(0);
+    expect(cloud.pushes).toBe(0);
+    expect(cloud.syncStarts).toBe(1);
+  });
+});
+
+describe('party money and stock permissions', () => {
+  it('gives the new permissions to the Admin role only', () => {
+    load();
+    expect(session.rolePermissions('Admin')).toEqual(expect.arrayContaining(['editPartyMoney', 'editStock']));
+    expect(session.rolePermissions('Salesman')).not.toContain('editPartyMoney');
+    expect(session.rolePermissions('Salesman')).not.toContain('editStock');
+    expect(session.rolePermissions('Accountant')).not.toContain('editStock');
+  });
+
+  it('honours a single explicit grant on a salesman', async () => {
+    load([owner, { ...salesman, permissions: ['usePos', 'editPartyMoney'] }]);
+    await login(salesman);
+    expect(session.has('editPartyMoney')).toBe(true);
+    expect(session.has('editStock')).toBe(false);
   });
 });

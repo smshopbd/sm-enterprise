@@ -187,6 +187,8 @@ export class CloudService {
    * a remote deletion, so no sync may run.
    */
   private keyVerified = false;
+  /** Last key check found a backend with no active account yet (fresh project). */
+  private needsClaim = false;
   /** Concurrent callers must share one client instead of each creating one. */
   private clientPromise?: Promise<SupabaseClient | null>;
   private clientPromiseKey = '';
@@ -326,12 +328,14 @@ export class CloudService {
     // events. A quiet poll keeps two open devices in step instead.
     window.setInterval(() => {
       if (document.visibilityState === 'visible' && this.canAutoSync()) void this.beginSync();
-    }, 45_000);
+    }, 15_000);
   }
 
   /** Every automatic ingress verifies the key before reading the shop. */
   private async beginSync(): Promise<void> {
-    if (!this.canAutoSync()) return;
+    // Recovery must be able to run while the key is still unverified, otherwise
+    // one failed probe would disable the retry that is supposed to fix it.
+    if (!this.syncPermitted()) return;
     try {
       if (!this.keyVerified && !(await this.verifyKey())) {
         // Staying quiet here is how a device keeps saving locally while its
@@ -360,7 +364,15 @@ export class CloudService {
     if (this.verifying) return this.verifying;
     this.verifying = (async () => {
       try {
-        if (await this.isClaimed() !== true) return false;
+        const claimed = await this.isClaimed();
+        if (claimed === false) {
+          // A fresh database has no account row yet; only a login (which claims
+          // it) can open the gate, so say that instead of blaming the password.
+          this.needsClaim = true;
+          return false;
+        }
+        if (claimed !== true) return false;
+        this.needsClaim = false;
         if (!await this.probeKey()) return false;
         // Another device may have wiped the shop while this one was closed.
         // Applying it here means stale caches never upload over the reset.
@@ -401,12 +413,17 @@ export class CloudService {
   /** A closed gate must look closed: red badge, a reason, and a retry. */
   private reportGateClosed(): void {
     this.status.set('error');
-    this.statusMessage.set(this.syncBlockedMessage());
+    this.statusMessage.set(this.needsClaim ? this.claimRequiredMessage() : this.syncBlockedMessage());
     this.scheduleRetry();
   }
 
+  private claimRequiredMessage(): string {
+    return 'নতুন ক্লাউড ডাটাবেস এখনো চালু হয়নি — একবার লগআউট করে আবার লগইন করুন; লগইনের পর সব ডেটা নিজে থেকেই আপলোড হবে।';
+  }
+
   private scheduleRetry(): void {
-    if (!this.canAutoSync() || this.retryTimer || typeof window === 'undefined') return;
+    // The key may still be unverified — retrying is exactly what reopens it.
+    if (!this.syncPermitted() || this.retryTimer || typeof window === 'undefined') return;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
       void this.beginSync();
@@ -469,7 +486,7 @@ export class CloudService {
       this.persistRestoreIntent();
     }
     this.writeConfig();
-    if (this.canAutoSync()) this.scheduleRetry();
+    if (this.syncPermitted()) this.scheduleRetry();
   }
 
   /** Config is local-only: strip it out of anything we put in a backup or the cloud. */
@@ -1049,9 +1066,14 @@ export class CloudService {
     if (this.restoreIntent()) throw new Error('রিস্টোরের পরে আগে reconcileRestoredData দিয়ে ডেটা মিলিয়ে সংঘাত সমাধান করুন।');
   }
 
-  private canAutoSync(): boolean {
+  /** Settings and a shop key allow a sync attempt; the key itself may be unverified. */
+  private syncPermitted(): boolean {
     return !this.paused && this.isEnabled() && this.config().autoSync
-      && !this.restoreIntent() && !!this.userKeyValue && this.keyVerified;
+      && !this.restoreIntent() && !!this.userKeyValue;
+  }
+
+  private canAutoSync(): boolean {
+    return this.syncPermitted() && this.keyVerified;
   }
 
   /** Only public entry points enqueue; queued implementations never call wrappers. */
@@ -1282,7 +1304,7 @@ export class CloudService {
 
   private localPayload(key: string, id: string): Payload | null {
     const draft = this.drafts.get(key);
-    if (draft) return draft.payloads.get(id) ?? null;
+    if (draft?.mutable) return draft.payloads.get(id) ?? null;
     return this.rows(key).find(row => row.rowId === id)?.data ?? null;
   }
 
@@ -1578,6 +1600,9 @@ export class CloudService {
       this.outbox.add(key);
       this.markMetadataDirty();
     }
+    // The header badge is informational; a save writes several collections and
+    // scanning every row on each of them made the save itself stutter.
+    this.scheduleRefreshPending();
     if (!this.canAutoSync()) return;
     const timer = this.timers.get(key);
     if (timer) clearTimeout(timer);
@@ -1589,13 +1614,15 @@ export class CloudService {
         // Another device may have reset the shop while this edit waited: the
         // reset wins, otherwise the stale rows would be uploaded again.
         if (await this.applyPendingReset()) return;
+        // A realtime echo can acknowledge this edit before the timer fires; a
+        // full collection read would then be pure cost on a large product book.
+        if (!this.pendingCount(key)) return;
         if (this.canAutoSync()) await this.pushCollectionInternal(key);
       }).then(
         () => { this.dropFromOutboxIfLanded(key); this.flushMetadata(); },
         error => this.noteUploadFailure(error)
       );
     }, 1500));
-    this.refreshPending();
   }
 
   /** Rows of one collection the server has not accepted yet (edits and deletions). */
@@ -1651,14 +1678,14 @@ export class CloudService {
    * page scope only decides what to *read*; a failed upload must never wait for
    * the user to return to the page that produced it.
    */
-  private retryOutbox(): Promise<void> {
+  private retryOutbox(force = false): Promise<void> {
     this.seedOutbox();
     if (!this.outbox.size) return Promise.resolve();
     return this.enqueue(async () => {
-      if (!this.canAutoSync()) return;
+      if (!force && !this.canAutoSync()) return;
       let failed = false;
       for (const key of [...this.outbox]) {
-        if (!this.canAutoSync()) return;
+        if (!force && !this.canAutoSync()) return;
         if (!this.collectionKeys().includes(key)) {
           this.outbox.delete(key);
           continue;
@@ -1686,6 +1713,24 @@ export class CloudService {
       }
       if (failed) this.scheduleRetry();
     });
+  }
+
+  /**
+   * One-tap retry from the header. Unlike the automatic loop it also runs when
+   * auto-sync is off, so a saved sale can always be uploaded deliberately.
+   */
+  async retryNow(): Promise<void> {
+    try {
+      this.assertOrdinary();
+      if (!this.keyVerified && !(await this.verifyKey())) {
+        this.reportGateClosed();
+        return;
+      }
+      if (await this.applyPendingReset()) return;
+      await this.retryOutbox(true);
+    } catch (error) {
+      this.noteUploadFailure(error);
+    }
   }
 
   /**
@@ -1885,6 +1930,12 @@ export class CloudService {
   pushAll(): Promise<SyncReport> {
     return this.reportOperation(async report => {
       this.assertOrdinary();
+      // Uploading before the gate opens would only hit RLS; ask for the login
+      // that claims a fresh database instead of showing a raw policy error.
+      if (!this.keyVerified && !(await this.verifyKey())) {
+        this.reportGateClosed();
+        throw new Error(this.statusMessage() || this.syncBlockedMessage());
+      }
       if (await this.applyPendingReset()) return;
       await this.pushAllInternal(report);
     });
@@ -1919,6 +1970,12 @@ export class CloudService {
   pullAll(): Promise<SyncReport> {
     return this.reportOperation(async report => {
       this.assertOrdinary();
+      // RLS hides every row from an unverified key; reading an empty shop here
+      // would look like a server-side wipe, so the gate must open first.
+      if (!this.keyVerified && !(await this.verifyKey())) {
+        this.reportGateClosed();
+        throw new Error(this.statusMessage() || this.syncBlockedMessage());
+      }
       if (await this.applyPendingReset()) return;
       await this.pullAllInternal(report);
       await this.subscribeRealtime();

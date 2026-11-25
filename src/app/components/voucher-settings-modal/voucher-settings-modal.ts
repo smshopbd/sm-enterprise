@@ -313,6 +313,19 @@ type TermsKey =
                 }
               </div>
 
+              <!-- Item table column borders -->
+              <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <span class="font-bold text-slate-900 block">{{ prefs.txt('কলাম বর্ডার', 'Column borders') }}</span>
+                  <span class="text-[11px] text-slate-500">{{ prefs.txt('পণ্যের টেবিলে প্রতিটি কলাম ও সারির চারপাশে বর্ডার থাকবে; বন্ধ করলে শুধু নিচের রেখা থাকবে।', 'Draws a border around every cell of the item table; turn it off for underline-only rows.') }}</span>
+                </div>
+                <input
+                  type="checkbox"
+                  [(ngModel)]="formSettings.showColumnBorders"
+                  class="w-5 h-5 accent-teal-600 rounded cursor-pointer"
+                />
+              </div>
+
               <!-- QR Code (sales invoice & return notes only) -->
               @if (voucherType() !== 'purchase') {
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -624,6 +637,11 @@ type TermsKey =
                     </button>
                   } @else {
                     <span class="text-[11px] text-slate-400 italic">{{ prefs.txt('কোনো ছবি দেওয়া হয়নি', 'No image provided') }}</span>
+                    @if (formSettings.showSignatureImage) {
+                      <p class="text-[11px] text-rose-600 font-bold w-full">
+                        {{ prefs.txt('স্বাক্ষরের ছবি নেই — ভাউচারে স্বাক্ষর ছাপা হবে না। আবার আপলোড করুন।', 'No signature image stored — vouchers will print without a signature. Please upload it again.') }}
+                      </p>
+                    }
                   }
                   <label class="bg-teal-700 hover:bg-teal-800 text-white font-bold px-3 py-1.5 rounded-lg cursor-pointer inline-flex items-center gap-1">
                     <mat-icon class="text-sm">upload</mat-icon> {{ prefs.txt('ছবি আপলোড', 'Upload image') }}

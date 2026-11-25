@@ -156,3 +156,70 @@ export function geoDivisionOfDistrict(name: string): string {
   if (!district) return '';
   return BD_DIVISIONS.find(d => d.districts.some(x => x.en === district))?.en ?? '';
 }
+
+// Bengali ya+nukta is typed two ways; fold both so lookups always match.
+const geoKey = (value: string) => value.normalize('NFC')
+  .replace(/\u09DF/g, '\u09AF\u09BC')
+  .trim().toLowerCase().replace(/\s+/g, ' ');
+
+let geoEnToBn: Map<string, string> | null = null;
+let geoBnToEn: Map<string, string> | null = null;
+
+function geoEnToBnMap(): Map<string, string> {
+  if (geoEnToBn) return geoEnToBn;
+  const map = new Map<string, string>();
+  for (const division of BD_DIVISIONS) {
+    map.set(geoKey(division.en), division.bn);
+    for (const district of division.districts) {
+      map.set(geoKey(district.en), district.bn);
+      for (const upazila of district.upazilas) {
+        if (!map.has(geoKey(upazila.en))) map.set(geoKey(upazila.en), upazila.bn);
+      }
+    }
+  }
+  geoEnToBn = map;
+  return map;
+}
+
+function geoBnToEnMap(): Map<string, string> {
+  if (geoBnToEn) return geoBnToEn;
+  const map = new Map<string, string>();
+  for (const division of BD_DIVISIONS) {
+    map.set(geoKey(division.bn), division.en);
+    for (const district of division.districts) {
+      map.set(geoKey(district.bn), district.en);
+      for (const upazila of district.upazilas) {
+        if (!map.has(geoKey(upazila.bn))) map.set(geoKey(upazila.bn), upazila.en);
+      }
+    }
+  }
+  geoBnToEn = map;
+  return map;
+}
+
+/**
+ * Addresses store division/district/upazila as the English `en` value (that is
+ * what the selects emit), but staff type the area line in Bangla. Printing the
+ * saved string as-is mixes both scripts, so every saved region name is swapped
+ * to the reader's language right before display. Repeated parts (legacy rows
+ * stored thana and upazila twice) are dropped.
+ */
+export function localizeAddress(text: string | null | undefined, lang: string): string {
+  const raw = (text || '').trim();
+  if (!raw) return '';
+  const map = lang === 'en' ? geoBnToEnMap() : geoEnToBnMap();
+  const parts = raw.split(',').map(part => map.get(geoKey(part)) ?? part.trim());
+  return Array.from(new Set(parts.filter(Boolean))).join(', ');
+}
+
+/** Legacy addresses repeat the region names inside the area line; this keeps just the area part for prefill. */
+export function stripRegionNames(text: string | null | undefined): string {
+  const raw = (text || '').trim();
+  if (!raw) return '';
+  const english = geoEnToBnMap();
+  const bangla = geoBnToEnMap();
+  return raw.split(',')
+    .map(part => part.trim())
+    .filter(part => part && !english.has(geoKey(part)) && !bangla.has(geoKey(part)))
+    .join(', ');
+}

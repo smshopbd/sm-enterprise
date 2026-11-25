@@ -8,6 +8,7 @@ export interface VoucherSheet {
   pageWmm: number;
   pageHmm: number;
   landscape: boolean;
+  paperSize: 'A4' | 'A5' | 'Custom';
   copies: number;
   cols: number;
   rows: number;
@@ -31,11 +32,14 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
 export function resolveVoucherSheet(settings: VoucherSettings): VoucherSheet {
   let pageWmm = 210;
   let pageHmm = 297;
+  let paperSize: VoucherSheet['paperSize'] = 'A4';
 
   if (settings.paperSize === 'A5') {
+    paperSize = 'A5';
     pageWmm = 148;
     pageHmm = 210;
   } else if (settings.paperSize === 'Custom') {
+    paperSize = 'Custom';
     pageWmm = clamp(settings.customPaperWidthMm, 60, 600, 210);
     pageHmm = clamp(settings.customPaperHeightMm, 60, 600, 297);
   }
@@ -68,6 +72,7 @@ export function resolveVoucherSheet(settings: VoucherSettings): VoucherSheet {
     pageWmm,
     pageHmm,
     landscape,
+    paperSize,
     copies,
     cols,
     rows,
@@ -98,10 +103,20 @@ function sheetsOf(target: VoucherPrintTarget): HTMLElement[] {
   return target.paperEls?.length ? target.paperEls : [target.paperEl];
 }
 
+/**
+ * Standard sizes are named so the print driver picks its own A4/A5 paper
+ * instead of a custom media box — Canon LBP and similar lasers otherwise
+ * rescale or clip the sheet. Custom paper keeps the explicit millimetres.
+ */
+export function voucherPageSizeCss(sheet: VoucherSheet): string {
+  if (sheet.paperSize === 'Custom') return `${sheet.pageWmm}mm ${sheet.pageHmm}mm`;
+  return `${sheet.paperSize} ${sheet.landscape ? 'landscape' : 'portrait'}`;
+}
+
 function printPageCss(sheet: VoucherSheet): string {
   return `
-@page { size: ${sheet.pageWmm}mm ${sheet.pageHmm}mm; margin: 0; }
-html, body { margin: 0; padding: 0; background: #fff; }
+@page { size: ${voucherPageSizeCss(sheet)}; margin: 0; }
+html, body { margin: 0; padding: 0; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 body { width: ${sheet.sheetW}px; }
 .voucher-print-scaler { width: auto !important; height: auto !important; margin: 0 !important; overflow: visible !important; }
 .voucher-print-scaler + .voucher-print-scaler { break-before: page; page-break-before: always; }
@@ -329,16 +344,26 @@ function fileNamesFor(base: string, count: number, extension: string): string[] 
   return Array.from({ length: count }, (_, index) => `${base}-page-${index + 1}.${extension}`);
 }
 
-export async function downloadVoucherJpg(target: VoucherPrintTarget): Promise<void> {
+export async function downloadVoucherJpg(target: VoucherPrintTarget): Promise<number> {
   const shots = await captureSheets(target, 'jpeg');
-  const names = fileNamesFor(target.fileName, shots.length, 'jpg');
-  shots.forEach((shot, index) => saveBlob(dataUrlToBlob(shot), names[index]));
+  return saveShots(shots, fileNamesFor(target.fileName, shots.length, 'jpg'));
 }
 
-export async function downloadVoucherPng(target: VoucherPrintTarget): Promise<void> {
+export async function downloadVoucherPng(target: VoucherPrintTarget): Promise<number> {
   const shots = await captureSheets(target, 'png');
-  const names = fileNamesFor(target.fileName, shots.length, 'png');
-  shots.forEach((shot, index) => saveBlob(dataUrlToBlob(shot), names[index]));
+  return saveShots(shots, fileNamesFor(target.fileName, shots.length, 'png'));
+}
+
+/**
+ * Chrome treats a burst of programmatic saves as automatic downloads and can
+ * drop every file after the first, so each page is handed over separately.
+ */
+async function saveShots(shots: string[], names: string[]): Promise<number> {
+  for (let index = 0; index < shots.length; index++) {
+    saveBlob(dataUrlToBlob(shots[index]), names[index]);
+    if (index < shots.length - 1) await new Promise<void>(resolve => setTimeout(resolve, 400));
+  }
+  return shots.length;
 }
 
 export async function downloadVoucherPdf(target: VoucherPrintTarget): Promise<void> {

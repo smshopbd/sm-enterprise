@@ -5,6 +5,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { DataService, Purchase, PurchaseItem } from '../../services/data';
 import { NotificationService } from '../../services/notification';
 import { PreferencesService } from '../../services/preferences';
+import { localizeAddress } from '../../utils/bd-geo';
 import { VoucherSettingsModal } from '../voucher-settings-modal/voucher-settings-modal';
 import {
   VOUCHER_LAYOUT_OPTIONS,
@@ -62,6 +63,7 @@ import {
     .sp-num { text-align: right !important; white-space: nowrap; }
     .sp-items { border: 1px solid #cbd5d5; color: #000; font-size: 12px; font-weight: 900; margin-top: -7px; }
     .sp-items td { height: 29px; }
+    .sp-invoice.sp-grid .sp-items th, .sp-invoice.sp-grid .sp-items td { border: 1px solid #cbd5d5; }
     .sp-sum { font-weight: bold; background: #f3f7f6; }
     .sp-split { display: flex; gap: 12px; margin-top: 36px; align-items: flex-start; }
     .sp-left { width: 55%; }
@@ -279,6 +281,7 @@ import {
 
             <div
               class="sp-invoice printable-area"
+              [class.sp-grid]="settings().showColumnBorders"
               [style.width.px]="sheet().designW"
               [style.min-height.px]="sheet().designH"
               [style.padding.px]="sheet().margin"
@@ -314,7 +317,7 @@ import {
                   <p>Name: {{ p.supplierName }}</p>
                   <p>Mobile: {{ supplierPhone() || '—' }}</p>
                   @if (supplier()?.address) {
-                    <p>Address: {{ supplier()?.address }}</p>
+                    <p>Address: {{ supplierAddress() }}</p>
                   }
                 </div>
                 <div class="sp-right sp-customer-meta">
@@ -550,7 +553,7 @@ export class PurchaseVoucher implements AfterViewChecked, OnDestroy {
     this.runVoucherJob(runner, `${kind.toUpperCase()} ফাইল তৈরি করা যায়নি।`, `${kind.toUpperCase()} export failed`);
   }
 
-  private runVoucherJob(runner: (target: VoucherPrintTarget) => Promise<void>, messageBn: string, messageEn: string) {
+  private runVoucherJob(runner: (target: VoucherPrintTarget) => Promise<void | number>, messageBn: string, messageEn: string) {
     const paperEl = this.host.nativeElement.querySelector('.voucher-print-paper') as HTMLElement | null;
     if (!paperEl) return;
     const invoice = this.purchase()?.invoice ?? '';
@@ -568,6 +571,7 @@ export class PurchaseVoucher implements AfterViewChecked, OnDestroy {
   });
 
   readonly supplierPhone = computed(() => (this.supplier()?.phone || '').trim());
+  readonly supplierAddress = computed(() => localizeAddress(this.supplier()?.address, this.prefs.language()));
 
   readonly items = computed(() => this.purchase()?.items ?? []);
 

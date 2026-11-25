@@ -10,6 +10,7 @@ interface Row { collection: string; row_id: string; data: Record<string, unknown
 const PRODUCTS = 'sm_products_v2';
 const WAREHOUSES = 'sm_warehouses_v1';
 const SETTINGS = 'sm_voucher_settings_v2';
+const SALES = 'sm_sales_v1';
 
 function installLocalStorage(): void {
   const values = new Map<string, string>();
@@ -175,11 +176,14 @@ function fakeClient(initial: Row[] = []) {
 }
 
 interface Product { id: string; name: string; optional?: string }
-function setup(initial: Product[] = [{ id: 'p1', name: 'A' }], remote: Row[] = [], localSettings: Record<string, unknown> | null = null) {
+function setup(initial: Product[] = [{ id: 'p1', name: 'A' }], remote: Row[] = [], localSettings: Record<string, unknown> | null = null,
+  sales: Record<string, unknown>[] = []) {
   installLocalStorage();
   const values = new Map<string, unknown>([[PRODUCTS, initial]]);
+  if (sales.length) values.set(SALES, sales);
   if (localSettings) values.set(SETTINGS, localSettings);
   const products = signal(initial);
+  const salesRows = signal(sales);
   const warehouses = signal<string[]>([]);
   const settings = signal<Record<string, unknown> | null>(localSettings);
   const writes: string[] = [];
@@ -191,6 +195,7 @@ function setup(initial: Product[] = [{ id: 'p1', name: 'A' }], remote: Row[] = [
       writes.push(key);
       values.set(key, value);
       if (key === PRODUCTS) products.set(value as Product[]);
+      if (key === SALES) salesRows.set(value as Record<string, unknown>[]);
       if (key === WAREHOUSES) warehouses.set(value as string[]);
       if (key === SETTINGS) settings.set(value as Record<string, unknown> | null);
     },
@@ -200,13 +205,17 @@ function setup(initial: Product[] = [{ id: 'p1', name: 'A' }], remote: Row[] = [
       values.clear();
       for (const [key, value] of Object.entries(keep)) values.set(key, value);
       products.set((keep[PRODUCTS] as Product[]) ?? []);
+      salesRows.set((keep[SALES] as Record<string, unknown>[]) ?? []);
       warehouses.set((keep[WAREHOUSES] as string[]) ?? []);
       settings.set((keep[SETTINGS] as Record<string, unknown> | null) ?? null);
       return { collections: Object.keys(keep).length, records: 0, media: 0, conflicts: 0, skipped: [] };
     }
   } as unknown as StorageService;
   const data = {
-    collections: () => [{ key: PRODUCTS, signal: products }, { key: WAREHOUSES, signal: warehouses }],
+    collections: () => [
+      { key: PRODUCTS, signal: products }, { key: SALES, signal: salesRows },
+      { key: WAREHOUSES, signal: warehouses }
+    ],
     voucherSettings: settings
   } as unknown as DataService;
   TestBed.configureTestingModule({ providers: [
@@ -220,7 +229,7 @@ function setup(initial: Product[] = [{ id: 'p1', name: 'A' }], remote: Row[] = [
     { userKeyValue: 'a'.repeat(64), keyVerified: true });
   const cloud = fakeClient(remote);
   (service as unknown as { supabase: () => Promise<SupabaseClient> }).supabase = async () => cloud.client;
-  return { service, products, warehouses, settings, writes, ...cloud };
+  return { service, products, salesRows, warehouses, settings, writes, values, ...cloud };
 }
 
 function internal(service: CloudService) {
@@ -231,8 +240,13 @@ function internal(service: CloudService) {
     refreshPending(): void;
     applyRealtime(row: Row): Promise<void>;
     outbox: Set<string>;
+    retryTimer?: ReturnType<typeof setTimeout>;
     retryOutbox(): Promise<void>;
     stampLocalEdits(key: string): void;
+    beginSync(): Promise<void>;
+    keyVerified: boolean;
+    isClaimed(): Promise<boolean | null>;
+    probeKey(): Promise<boolean>;
   };
 }
 function row(id: string, data: Record<string, unknown>, collection = PRODUCTS): Row {
@@ -326,6 +340,100 @@ describe('CloudService reconciliation', () => {
     await internal(service).retryOutbox();
     expect(table.get(`${PRODUCTS}:p1`)!.data['name']).toBe('Saved by an older build');
     expect(internal(service).outbox.size).toBe(0);
+  });
+
+  it('keeps an edit made while that row is already being uploaded', async () => {
+    const { service, products, values, table, beforeWrite } = setup([{ id: 'p1', name: 'Old' }], []);
+    const helper = internal(service);
+    helper.outbox.add(PRODUCTS);
+    beforeWrite(() => {
+      const newer = [{ id: 'p1', name: 'Edited while uploading' }];
+      values.set(PRODUCTS, newer);
+      products.set(newer);
+      helper.stampLocalEdits(PRODUCTS);
+    });
+
+    await service.pushCollection(PRODUCTS);
+    expect(table.get(`${PRODUCTS}:p1`)!.data['name']).toBe('Old');
+    expect(helper.editTimes.get(PRODUCTS)?.has('p1')).toBe(true);
+    helper.refreshPending();
+    expect(service.pendingRows()).toBe(1);
+
+    await service.pushCollection(PRODUCTS);
+    expect(table.get(`${PRODUCTS}:p1`)!.data['name']).toBe('Edited while uploading');
+    helper.refreshPending();
+    expect(service.pendingRows()).toBe(0);
+  });
+
+  it('round-trips every sale field through the cloud without flattening it', async () => {
+    const record = {
+      id: 1795534007784870, invoice: 'Sale-1090', warehouse: 'SM Warehouse', date: '2026-11-24',
+      customerName: 'Customer', partyId: 7, status: 'Completed', total: 1320, paid: 1320, due: 0,
+      paymentStatus: 'Paid', nextPayDate: '-', notes: 'POS Checkout', memoNote: 'Deliver after 5pm',
+      taxAmount: 20, damageAmount: 5, shipping: 30, warrantyTransport: 10, cashReceived: 1000,
+      bankPayment: 320, paymentMode: 'bKash', subtotal: 1255, discount: 0, discountType: 'fixed',
+      items: [{ id: 1, productId: 10, productName: 'Battery', quantity: 1, unit: 'pcs', salesPrice: 1255, total: 1255 }]
+    };
+    const first = setup([], [], null, [record]);
+    const pushed = await first.service.pushAll();
+    expect(pushed.error).toBeUndefined();
+    expect(first.table.get(`${SALES}:${record.id}`)!.data).toEqual(record);
+
+    TestBed.resetTestingModule();
+    const second = setup([], [...first.table.values()], null, []);
+    await second.service.pullAll();
+    expect(second.salesRows()).toEqual([record]);
+    expect(second.service.pendingRows()).toBe(0);
+  });
+
+  it('keeps retrying the key gate after a failed verification', async () => {
+    const { service } = setup();
+    const helper = internal(service);
+    helper.keyVerified = false;
+    helper.isClaimed = async () => true;
+    helper.probeKey = async () => false;
+    await helper.beginSync();
+    expect(service.status()).toBe('error');
+    // The failed probe used to leave no retry at all: canAutoSync required the
+    // very flag the retry was meant to restore.
+    expect(helper.retryTimer).toBeDefined();
+    if (helper.retryTimer) clearTimeout(helper.retryTimer);
+  });
+
+  it('reopens the gate on a later attempt and uploads the queued edit', async () => {
+    const { service, table } = setup([{ id: 'p1', name: 'Offline edit' }], []);
+    const helper = internal(service);
+    helper.keyVerified = false;
+    helper.outbox.add(PRODUCTS);
+    helper.isClaimed = async () => true;
+    helper.probeKey = async () => false;
+    await helper.beginSync();
+    expect(table.size).toBe(0);
+
+    helper.probeKey = async () => { helper.keyVerified = true; return true; };
+    await helper.beginSync();
+    expect(table.get(`${PRODUCTS}:p1`)!.data['name']).toBe('Offline edit');
+    expect(helper.outbox.size).toBe(0);
+    if (helper.retryTimer) clearTimeout(helper.retryTimer);
+  });
+
+  it('asks for the login that claims a fresh database instead of hitting RLS', async () => {
+    const { service, table } = setup([{ id: 'p1', name: 'A' }], []);
+    Object.assign(service as unknown as { keyVerified: boolean; isClaimed: () => Promise<boolean> },
+      { keyVerified: false, isClaimed: async () => false });
+    const report = await service.pushAll();
+    expect(report.error).toContain('লগআউট');
+    expect(table.size).toBe(0);
+    expect(service.status()).toBe('error');
+  });
+
+  it('never applies an empty pull from an unclaimed database', async () => {
+    const { service, products } = setup([{ id: 'p1', name: 'Keep me' }], []);
+    Object.assign(service as unknown as { keyVerified: boolean; isClaimed: () => Promise<boolean> },
+      { keyVerified: false, isClaimed: async () => false });
+    const report = await service.pullAll();
+    expect(report.error).toContain('লগআউট');
+    expect(products()).toEqual([{ id: 'p1', name: 'Keep me' }]);
   });
 
   it('keeps a failed upload queued without a popup and clears it after a later retry', async () => {

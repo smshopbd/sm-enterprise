@@ -5,6 +5,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { DataService } from '../../services/data';
 import { NotificationService } from '../../services/notification';
 import { PreferencesService } from '../../services/preferences';
+import { localizeAddress } from '../../utils/bd-geo';
 import { VoucherSettingsModal } from '../voucher-settings-modal/voucher-settings-modal';
 import { qrDataUrl } from '../../utils/qr-code';
 import { returnNoteQrText } from '../../utils/voucher-qr';
@@ -97,6 +98,7 @@ export interface ReturnNoteView {
     .sp-num { text-align: right !important; white-space: nowrap; }
     .sp-items { border: 1px solid #cbd5d5; color: #000; font-size: 12px; font-weight: 900; margin-top: -7px; }
     .sp-items td { height: 29px; }
+    .sp-invoice.sp-grid .sp-items th, .sp-invoice.sp-grid .sp-items td { border: 1px solid #cbd5d5; }
     .sp-sum { font-weight: bold; background: #f3f7f6; }
     .sp-split { display: flex; gap: 12px; margin-top: 36px; align-items: flex-start; }
     .sp-left { width: 55%; }
@@ -315,6 +317,7 @@ export interface ReturnNoteView {
 
             <div
               class="sp-invoice printable-area"
+              [class.sp-grid]="settings().showColumnBorders"
               [style.width.px]="sheet().designW"
               [style.min-height.px]="sheet().designH"
               [style.padding.px]="sheet().margin"
@@ -349,7 +352,7 @@ export interface ReturnNoteView {
                   <p><b class="sp-customer-title">{{ partyLabel() }}: {{ n.partyName }}</b></p>
                   <p>Mobile: {{ partyMobile() || '—' }}</p>
                   @if (n.address) {
-                    <p>Address: {{ n.address }}</p>
+                    <p>Address: {{ noteAddress() }}</p>
                   }
                 </div>
                 <div class="sp-right sp-customer-meta">
@@ -529,6 +532,8 @@ export class ReturnNoteVoucher implements AfterViewChecked, OnDestroy {
   readonly prefs = inject(PreferencesService);
 
   note = input<ReturnNoteView | null>(null);
+
+  readonly noteAddress = computed(() => localizeAddress(this.note()?.address, this.prefs.language()));
   close = output<void>();
   viewMode = input(false);
 
@@ -616,7 +621,7 @@ export class ReturnNoteVoucher implements AfterViewChecked, OnDestroy {
     this.runVoucherJob(runner, `${kind.toUpperCase()} ফাইল তৈরি করা যায়নি।`, `${kind.toUpperCase()} export failed`);
   }
 
-  private runVoucherJob(runner: (target: VoucherPrintTarget) => Promise<void>, messageBn: string, messageEn: string) {
+  private runVoucherJob(runner: (target: VoucherPrintTarget) => Promise<void | number>, messageBn: string, messageEn: string) {
     const paperEl = this.host.nativeElement.querySelector('.voucher-print-paper') as HTMLElement | null;
     if (!paperEl) return;
     const docNo = this.note()?.docNo ?? '';

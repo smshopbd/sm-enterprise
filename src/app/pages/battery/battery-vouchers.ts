@@ -874,7 +874,7 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
               {{ voucherListTitle() }}
               <span class="ml-1 rounded-full bg-indigo-100 dark:bg-indigo-950 px-2 py-0.5 text-[10px] font-black text-indigo-700 dark:text-indigo-300">{{ historyInRange().length }} / {{ history().length }}</span>
             </h2>
-            <p class="text-[10px] text-slate-400">{{ prefs.txt('ভাউচার নং বা পার্টির নাম দিয়ে খুঁজুন; চোখ আইকনে ভাউচার দেখুন, ডিলিটে অ্যাকাউন্ট ও স্টক ফেরত যাবে।', 'Search by voucher or party; view the voucher, and deleting it reverses accounts and stock.') }}</p>
+            <p class="text-[10px] text-slate-400">{{ prefs.txt('ভাউচার নং বা পার্টির নাম দিয়ে খুঁজুন; চোখ আইকনে ভাউচার দেখুন, পেন্সিলে এডিট / কাস্টমাইজ করুন, ডিলিটে অ্যাকাউন্ট ও স্টক ফেরত যাবে।', 'Search by voucher or party; view the voucher, edit / customize it with the pencil, and deleting it reverses accounts and stock.') }}</p>
           </div>
           <div class="relative">
             <mat-icon class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">search</mat-icon>
@@ -942,6 +942,9 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
                   <td class="px-3 py-2">
                     <div class="flex justify-center gap-1">
                       <button (click)="viewVoucher(v)" class="p-1 text-slate-500 hover:text-teal-600 cursor-pointer" [title]="prefs.txt('ভাউচার দেখুন', 'View voucher')"><mat-icon class="text-base">visibility</mat-icon></button>
+                      @if (v.source !== 'sale-adjustment') {
+                        <button (click)="editVoucher(v)" class="p-1 text-slate-500 hover:text-amber-600 cursor-pointer" [title]="prefs.txt('ভাউচার এডিট / কাস্টমাইজ', 'Edit / customize voucher')"><mat-icon class="text-base">edit_note</mat-icon></button>
+                      }
                       <button (click)="remove(v)" class="p-1 text-slate-500 hover:text-rose-600 cursor-pointer" [title]="prefs.txt('মুছুন', 'Delete')"><mat-icon class="text-base">delete</mat-icon></button>
                     </div>
                   </td>
@@ -1281,10 +1284,10 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
 
     @if (ledgerAccess(); as req) {
       <app-passcode-modal
-        [title]="req.action === 'edit' ? prefs.txt('লেজার এন্ট্রি এডিট', 'Edit ledger entry') : prefs.txt('লেজার এন্ট্রি ডিলিট', 'Delete ledger entry')"
+        [title]="req.action === 'edit' ? prefs.txt('ভাউচার এডিট / কাস্টমাইজ', 'Edit / customize voucher') : prefs.txt('ভাউচার ডিলিট', 'Delete voucher')"
         [message]="prefs.txt(
           req.action === 'edit'
-            ? req.voucher.voucherNo + ' এডিট করতে Admin PIN দিন। স্টক ও হিসাব আপডেট হয়ে যাবে।'
+            ? req.voucher.voucherNo + ' এডিট করতে Admin PIN দিন। তারিখ, পার্টি, লাইন ও পেমেন্ট বদলালে স্টক ও হিসাব নিজে থেকে আপডেট হবে।'
             : req.voucher.voucherNo + ' মুছে ফেলতে Admin PIN দিন। স্টক ও অ্যাকাউন্ট পোস্টিং ফেরত নেওয়া হবে।',
           req.action === 'edit'
             ? 'Enter the Admin PIN to edit ' + req.voucher.voucherNo + '. Stock and accounts will be updated.'
@@ -1294,7 +1297,7 @@ const EXCHANGE_KIND: BatteryKind = { key: 'exchange', bn: 'বদল থেক�
     }
 
     @if (voucher(); as saved) {
-      <app-battery-voucher [voucher]="saved" (close)="closeVoucher()" />
+      <app-battery-voucher [voucher]="saved" [canEdit]="saved.source !== 'sale-adjustment'" (edit)="editViewedVoucher()" (close)="closeVoucher()" />
     }
   `
 })
@@ -1869,6 +1872,24 @@ export class BatteryVouchers {
     if (!id) return;
     const voucher = this.dataService.batteryVouchers().find(v => v.id === id);
     if (!voucher || voucher.type !== this.type()) return;
+    if (voucher.source === 'sale-adjustment') {
+      // Trade-in rows belong to their sale invoice; editing them here would
+      // desync the invoice's battery adjustment.
+      this.notify.info(
+        this.prefs.txt('এই ভাউচার একটি বিক্রয় বিলের বিল-সমন্বয় — ওই বিলটি এডিট করলেই স্টক ঠিক হবে।', 'This voucher is a sale-invoice adjustment — edit that sale and the stock follows.'),
+        this.prefs.txt('বিল-সংযুক্ত ভাউচার', 'Invoice-linked voucher')
+      );
+      void this.router.navigateByUrl(`/battery/${this.type()}/vouchers`);
+      return;
+    }
+    // The prefilled form is only reachable through the Admin-PIN gate; a typed
+    // URL must not skip it.
+    const approved = this.router.getCurrentNavigation()?.extras.state?.['editApproved'] === true
+      || (typeof history !== 'undefined' && (history.state as Record<string, unknown> | null)?.['editApproved'] === true);
+    if (!approved) {
+      void this.router.navigateByUrl(`/battery/${this.type()}/vouchers`);
+      return;
+    }
     this.editingVoucher.set(voucher);
     this.partyName = voucher.partyName;
     this.partyId = voucher.partyId ?? null;
@@ -2110,6 +2131,13 @@ export class BatteryVouchers {
       );
       return;
     }
+    if (action === 'edit' && this.fundAllocated(voucher) > 0) {
+      this.notify.info(
+        this.prefs.txt(`${voucher.voucherNo} এর কিছু টাকা ব্যাটারি ফান্ড থেকে পরিশোধ হয়েছে — আগে সংশ্লিষ্ট ফান্ড ট্রান্সফারটি মুছুন, তারপর ভাউচারটি এডিট করুন।`, `Part of ${voucher.voucherNo} was paid from the battery fund — delete that fund transfer first, then edit the voucher.`),
+        this.prefs.txt('ফান্ডে পরিশোধিত ভাউচার', 'Fund-settled voucher')
+      );
+      return;
+    }
     this.ledgerAccess.set({ action, voucher });
   }
 
@@ -2119,7 +2147,7 @@ export class BatteryVouchers {
     this.ledgerAccess.set(null);
     if (req.action === 'edit') {
       this.ledgerDetail.set(null);
-      this.router.navigate(['/battery', req.voucher.type], { queryParams: { edit: req.voucher.id } });
+      this.router.navigate(['/battery', req.voucher.type], { queryParams: { edit: req.voucher.id }, state: { editApproved: true } });
       return;
     }
     void this.confirmLedgerDelete(req.voucher);
@@ -2439,6 +2467,18 @@ export class BatteryVouchers {
 
   viewVoucher(v: BatteryVoucher) {
     this.voucher.set(v);
+  }
+
+  /** Pencil in the voucher history: same Admin-PIN gate the ledger uses. */
+  editVoucher(v: BatteryVoucher) {
+    this.requestVoucherAction('edit', v);
+  }
+
+  /** Edit requested from inside the printable voucher preview. */
+  editViewedVoucher() {
+    const v = this.voucher();
+    this.voucher.set(null);
+    if (v) this.requestVoucherAction('edit', v);
   }
 
   closeVoucher() {

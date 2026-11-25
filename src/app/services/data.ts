@@ -491,6 +491,8 @@ export interface VoucherSettings {
   showPaymentStatus: boolean;
   /** Item code, serial and brand under the product description. */
   showItemCode: boolean;
+  /** Grid lines around every cell of the item table. */
+  showColumnBorders: boolean;
   /** Customer / Office / Accounts copy label on multi-copy sheets. */
   showCopyLabels: boolean;
   /** Amount in words under the bill total. */
@@ -508,6 +510,9 @@ export interface VoucherSettings {
   purchaseTerm2: string;
   /** Lets Add Sale bill any customer at the product's wholesale price, not only Dealer parties. */
   allowWholesalePrice: boolean;
+  /** Owner switches (Settings → Business): block money/stock edits for every user but the owner. */
+  lockPartyMoney: boolean;
+  lockStock: boolean;
   creditGreeting: string;
   creditTerm1: string;
   creditTerm2: string;
@@ -2055,7 +2060,7 @@ export class DataService {
         : this.supplierReturnPosts(record.status);
       if (!active) continue;
       const sign = direction * (kind === 'sale' || kind === 'supplier' ? -1 : 1);
-      const items: { productId?: number; productName: string; variantId?: number; quantity: number; unitFactor?: number }[] = [...(record.items || [])];
+      const items: { productId?: number; productName: string; itemCode?: string; variantId?: number; quantity: number; unitFactor?: number }[] = [...(record.items || [])];
       if (kind === 'sale') {
         const claim = (record as Sale).warranty;
         if (claim && isWarrantyCompleted(claim.status) && Number(claim.replacementQty) > 0) {
@@ -2070,10 +2075,23 @@ export class DataService {
         const factor = Number(item.unitFactor) > 0 ? Number(item.unitFactor) : 1;
         const quantity = this.roundMoney(Number(item.quantity) * factor);
         if (!Number.isFinite(quantity) || quantity < 0) throw new Error('Invalid inventory quantity.');
-        const matches = this.products().filter(p => item.productId != null ? p.id === item.productId : p.name === item.productName);
+        let matches = this.products().filter(p => item.productId != null ? p.id === item.productId : p.name === item.productName);
+        if (!matches.length && kind === 'purchase' && direction > 0) {
+          // A product recreated on another device keeps its code but gets a new id.
+          const code = String(item.itemCode ?? '').trim();
+          if (code) matches = this.products().filter(p => String(p.code ?? '').trim() === code);
+        }
         if (matches.length > 1) throw new Error(`Ambiguous product: ${item.productName}`);
         const product = matches[0];
-        if (!product || product.type === 'service') continue;
+        if (!product) {
+          // Dropping the line silently loses the stock the owner just bought.
+          if (kind === 'purchase' && direction > 0) {
+            const code = String(item.itemCode ?? '').trim();
+            throw new Error(`পণ্য পাওয়া যায়নি: ${item.productName}${code ? ` (${code})` : ''} — পণ্যটি সিঙ্ক হওয়ার পর ভাউচারটি আবার সেভ করুন।`);
+          }
+          continue;
+        }
+        if (product.type === 'service') continue;
         if (item.variantId != null && !product.variants?.some(v => v.id === item.variantId)) throw new Error(`Missing variant: ${item.productName}`);
         const delta = deltas.get(product.id) ?? { quantity: 0, variants: new Map<number, number>() };
         delta.quantity += sign * quantity;
@@ -2136,6 +2154,7 @@ export class DataService {
     const previous = this.sales().find(s => s.id === id);
     if (!previous) throw new Error('Sale not found.');
     const record: Sale = {
+      ...previous,
       ...sale,
       id,
       shareKey: previous.shareKey,
@@ -2516,8 +2535,14 @@ export class DataService {
     if (previous) this.postPurchaseStock(previous, -1);
     this.postPurchaseStock(record, 1);
     this.syncPurchaseCost(record);
-    if (previous) this.postPurchaseParty(previous, -1);
-    this.postPurchaseParty(record, 1);
+    const previousPartyId = this.partyForReference(previous.partyId, previous.supplierName)?.id;
+    const nextPartyId = this.partyForReference(record.partyId, record.supplierName)?.id;
+    const moneyChanged = this.roundMoney(previous.total) !== this.roundMoney(record.total)
+      || this.roundMoney(previous.paid) !== this.roundMoney(record.paid);
+    if (moneyChanged || previousPartyId !== nextPartyId) {
+      this.postPurchaseParty(previous, -1);
+      this.postPurchaseParty(record, 1);
+    }
   }
 
   deletePurchase(id: number) {
@@ -6241,6 +6266,7 @@ export class DataService {
     showSignatureImage: true,
     showPaymentStatus: true,
     showItemCode: true,
+    showColumnBorders: true,
     showCopyLabels: true,
     showAmountInWords: true,
     accentColor: '#087d6c',
@@ -6253,6 +6279,8 @@ export class DataService {
     purchaseTerm1: '১. ক্রয়কৃত পণ্যের ওয়ারেন্টি/গ্যারান্টি সরবরাহকারীর শর্ত অনুযায়ী প্রযোজ্য।',
     purchaseTerm2: '২. পণ্য ফেরত নিতে হলে পূর্বে কর্তৃপক্ষের অনুমোদন প্রয়োজন।',
     allowWholesalePrice: false,
+    lockPartyMoney: false,
+    lockStock: false,
     creditGreeting: 'আপনার আস্থার জন্য ধন্যবাদ!',
     creditTerm1: '১. ফেরত নেওয়া পণ্যের মূল্য গ্রাহকের হিসাবে ক্রেডিট হিসাব হয়েছে।',
     creditTerm2: '২. পণ্যের অবস্থা যাচাই শেষ হলে ক্রেডিট চূড়ান্ত বলে গণ্য হবে।',
@@ -6281,6 +6309,8 @@ export class DataService {
     // 90 was the previous default QR size; saved records carrying it were never touched by the user.
     if (merged.qrSize === 90) merged.qrSize = 75;
     if (merged.qrMode !== 'text') merged.qrMode = 'link';
+    merged.lockPartyMoney = merged.lockPartyMoney === true;
+    merged.lockStock = merged.lockStock === true;
     const margin = Number(merged.pageMarginMm);
     merged.pageMarginMm = Number.isFinite(margin) ? Math.min(30, Math.max(0, margin)) : 9;
     return merged;

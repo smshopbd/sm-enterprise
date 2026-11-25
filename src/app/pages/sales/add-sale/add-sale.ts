@@ -2509,8 +2509,14 @@ export class AddSale implements OnInit, CanLeave {
     const oldBatteryTotal = this.round2(batteryRows.reduce((acc, b) => acc + (Number(b.total) || 0), 0));
     const returnedTotal = this.round2(returnRows.reduce((acc, r) => acc + (Number(r.amount) || 0), 0));
 
-    const currentBill = this.round2(this.itemsAfterOrderDiscount + (Number(this.transportLabour) || 0) + (Number(this.warrantyTransport) || 0));
-    const paid = this.round2((Number(this.cashReceived) || 0) + (Number(this.bankPayment) || 0));
+    const editingId = this.editSaleId();
+    const originalSale = editingId !== null ? this.dataService.sales().find(s => s.id === editingId) : undefined;
+    const taxAmount = Number(originalSale?.taxAmount) || 0;
+    const damageAmount = Number(originalSale?.damageAmount) || 0;
+    const cashReceived = Number(this.cashReceived) || 0;
+    const bankPayment = Number(this.bankPayment) || 0;
+    const currentBill = this.round2(this.itemsAfterOrderDiscount + (Number(this.transportLabour) || 0) + (Number(this.warrantyTransport) || 0) + taxAmount + damageAmount);
+    const paid = this.round2(cashReceived + bankPayment);
     const due = Math.max(0, this.round2(currentBill - paid - oldBatteryTotal - returnedTotal));
     const pStatus = due <= 0 ? 'Paid' : (paid > 0 ? 'Partially Paid' : 'Unpaid');
 
@@ -2523,9 +2529,17 @@ export class AddSale implements OnInit, CanLeave {
       return;
     }
 
+    const samePayments = !!originalSale
+      && this.round2(Number(originalSale.cashReceived) || 0) === cashReceived
+      && this.round2(Number(originalSale.bankPayment) || 0) === bankPayment;
+    const paymentMode = samePayments && originalSale?.paymentMode
+      ? originalSale.paymentMode
+      : cashReceived > 0 && bankPayment > 0
+        ? 'Mixed'
+        : cashReceived > 0 ? 'Cash' : bankPayment > 0 ? 'Bank' : undefined;
     const payload: Omit<Sale, 'id' | 'status'> = {
       invoice: finalInvoice,
-      warehouse: 'SM Warehouse',
+      warehouse: originalSale?.warehouse || 'SM Warehouse',
       date: finalDate,
       customerName: this.customerName,
       partyId: this.selectedPartyId,
@@ -2545,13 +2559,14 @@ export class AddSale implements OnInit, CanLeave {
       paymentStatus: pStatus,
       nextPayDate: this.nextPaymentDate || '-',
       notes: this.notes,
+      memoNote: originalSale?.memoNote,
+      taxAmount: originalSale ? taxAmount : undefined,
+      damageAmount: originalSale ? damageAmount : undefined,
       shipping: Number(this.transportLabour) || 0,
       warrantyTransport: Number(this.warrantyTransport) || 0,
-      cashReceived: Number(this.cashReceived) || 0,
-      bankPayment: Number(this.bankPayment) || 0,
-      paymentMode: (Number(this.cashReceived) || 0) > 0 && (Number(this.bankPayment) || 0) > 0
-        ? 'Mixed'
-        : (Number(this.cashReceived) || 0) > 0 ? 'Cash' : (Number(this.bankPayment) || 0) > 0 ? 'Bank' : undefined,
+      cashReceived,
+      bankPayment,
+      paymentMode,
       returns: returnRows,
       warranty: this.hasWarrantyClaim ? this.warranty : undefined,
       batteryAdjustments: batteryRows,
@@ -2559,7 +2574,6 @@ export class AddSale implements OnInit, CanLeave {
       items: this.selectedProducts()
     };
 
-    const editingId = this.editSaleId();
     if (editingId !== null) {
       this.dataService.updateSale(editingId, { ...payload, status: this.orderStatus });
       this.orderLock.lock(editingId);

@@ -6,6 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { DataService, Product, WarrantyReceipt } from '../../../services/data';
 import { NotificationService } from '../../../services/notification';
 import { PreferencesService } from '../../../services/preferences';
+import { localizeAddress } from '../../../utils/bd-geo';
 import { createPager } from '../../../components/table-pagination/pagination';
 import { TablePagination } from '../../../components/table-pagination/table-pagination';
 import { DmyDateDirective } from '../../../directives/dmy-date.directive';
@@ -432,7 +433,7 @@ interface ReceiptForm {
             <div><dt class="text-slate-500">{{ prefs.txt('অবস্থা', 'Status') }}</dt><dd class="font-bold">{{ row.status }}</dd></div>
             <div><dt class="text-slate-500">{{ prefs.txt('কাস্টমার', 'Customer') }}</dt><dd class="font-bold">{{ row.customerName }}</dd></div>
             <div><dt class="text-slate-500">{{ prefs.txt('মোবাইল', 'Mobile') }}</dt><dd class="font-mono font-bold">{{ row.phone || '-' }}</dd></div>
-            <div class="sm:col-span-2"><dt class="text-slate-500">{{ prefs.txt('ঠিকানা', 'Address') }}</dt><dd class="font-bold">{{ row.address || '-' }}</dd></div>
+            <div class="sm:col-span-2"><dt class="text-slate-500">{{ prefs.txt('ঠিকানা', 'Address') }}</dt><dd class="font-bold">{{ addr(row.address) }}</dd></div>
             <div><dt class="text-slate-500">{{ prefs.txt('পণ্য', 'Product') }}</dt><dd class="font-bold text-teal-700 dark:text-teal-300">{{ row.productName }}</dd></div>
             <div><dt class="text-slate-500">{{ prefs.txt('সিরিয়াল', 'Serial') }}</dt><dd class="font-mono font-bold">{{ row.serialNumber || '-' }}</dd></div>
             <div><dt class="text-slate-500">{{ prefs.txt('পরিমাণ', 'Quantity') }}</dt><dd class="font-bold">{{ row.quantity }} {{ row.unit }}</dd></div>
@@ -476,6 +477,10 @@ export class WarrantyReceive {
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   readonly prefs = inject(PreferencesService);
+
+  addr(value?: string): string {
+    return localizeAddress(value, this.prefs.language()) || '-';
+  }
   /** The list and the form live on separate routes; only one is rendered at a time. */
   readonly isFormView = this.route.snapshot.data['warrantyView'] === 'form';
 

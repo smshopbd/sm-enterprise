@@ -10,6 +10,8 @@ export type UserRole = 'Admin' | 'Salesman' | 'Accountant';
 export type Permission =
   | 'manageUsers'
   | 'editPrice'
+  | 'editPartyMoney'
+  | 'editStock'
   | 'deleteRecords'
   | 'viewReports'
   | 'viewAccounts'
@@ -19,8 +21,8 @@ export type Permission =
   | 'viewHrm';
 
 export const ALL_PERMISSIONS: Permission[] = [
-  'manageUsers', 'editPrice', 'deleteRecords', 'viewReports',
-  'viewAccounts', 'cashClosing', 'manageSettings', 'usePos', 'viewHrm'
+  'manageUsers', 'editPrice', 'editPartyMoney', 'editStock', 'deleteRecords',
+  'viewReports', 'viewAccounts', 'cashClosing', 'manageSettings', 'usePos', 'viewHrm'
 ];
 
 export interface UserAccount {
@@ -272,6 +274,9 @@ export class SessionService {
         this.persistUsers();
         return { ok: false, error: taken ? 'exists' : 'cloud' };
       }
+      // A fresh database has no rows at all: seed it with this device's shop so
+      // a second device can log in and pull the whole book.
+      void this.cloud.pushAll();
     }
     this.startSession(next);
     this.cloud?.startSync();
@@ -310,7 +315,10 @@ export class SessionService {
         // The shop is either already claimed (probe) or brand new (claim now).
         // Sync stays off when the server cannot confirm the key.
         if (await this.cloud.isClaimed() === false) {
-          await this.cloud.claimAccount(user as unknown as Record<string, unknown>);
+          if (await this.cloud.claimAccount(user as unknown as Record<string, unknown>)) {
+            // First login on a fresh backend: upload this device's whole shop.
+            void this.cloud.pushAll();
+          }
         } else {
           await this.cloud.probeKey();
         }
@@ -707,8 +715,33 @@ export class SessionService {
       return;
     }
     this.cloud?.setUserKey(key);
-    // A reload keeps the login, so the shop must resume syncing on its own.
+    // A reload keeps the login, so the shop must resume syncing on its own —
+    // after a fresh database has been claimed with this device's key.
+    void this.resumeCloud();
+  }
+
+  private async resumeCloud(): Promise<void> {
+    await this.claimFreshBackend();
     this.cloud?.startSync();
+  }
+
+  /**
+   * A backend that has never been claimed has no account rows, so the gate
+   * rejects every upload. The stored key already belongs to this shop, so use
+   * it to claim the database and upload the whole book — a migrated project
+   * then starts working on reload instead of demanding a logout.
+   */
+  private async claimFreshBackend(): Promise<void> {
+    const cloud = this.cloud;
+    if (!cloud?.isEnabled() || !cloud.hasUserKey()) return;
+    const main = this.users().find(user => this.isMain(user));
+    // The inserted row is what the server hashes the header against; a
+    // mismatched hash would claim the database for nobody.
+    if (!main?.active || main.role !== 'Admin' || !main.cloudHash
+      || main.cloudHash !== cloudKeyHash(cloud.userKey())) return;
+    if (await cloud.isClaimed() !== false) return;
+    if (!(await cloud.claimAccount(main as unknown as Record<string, unknown>))) return;
+    void cloud.pushAll();
   }
 
   private dropLegacyAudit(): void {

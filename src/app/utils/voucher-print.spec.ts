@@ -1,5 +1,5 @@
 import { VoucherSettings } from '../services/data';
-import { resolveVoucherSheet } from './voucher-print';
+import { resolveVoucherSheet, voucherPageSizeCss } from './voucher-print';
 
 function settings(overrides: Partial<VoucherSettings> = {}): VoucherSettings {
   return {
@@ -75,5 +75,22 @@ describe('resolveVoucherSheet', () => {
     expect(two.rows).toBe(2);
     expect(two.designW).toBe(794);
     expect(two.cellH).toBe((two.sheetH - two.pad * 2 - two.gap) / 2);
+  });
+});
+
+describe('voucherPageSizeCss', () => {
+  it('names standard paper so the print driver picks its own A4 media box', () => {
+    expect(voucherPageSizeCss(resolveVoucherSheet(settings()))).toBe('A4 portrait');
+    expect(voucherPageSizeCss(resolveVoucherSheet(settings({ printOrientation: 'landscape' })))).toBe('A4 landscape');
+  });
+
+  it('names A5 instead of sending a custom millimetre box', () => {
+    expect(voucherPageSizeCss(resolveVoucherSheet(settings({ paperSize: 'A5' })))).toBe('A5 portrait');
+    expect(voucherPageSizeCss(resolveVoucherSheet(settings({ paperSize: 'A5', printOrientation: 'landscape' })))).toBe('A5 landscape');
+  });
+
+  it('keeps explicit millimetres for custom paper', () => {
+    const sheet = resolveVoucherSheet(settings({ paperSize: 'Custom', customPaperWidthMm: 100, customPaperHeightMm: 150 }));
+    expect(voucherPageSizeCss(sheet)).toBe('100mm 150mm');
   });
 });

@@ -6,6 +6,7 @@ import { DataService, LedgerPayment, Party, hasPurchaseRole, purchaseAccountOf }
 import { NotificationService } from '../../../services/notification';
 import { SessionService } from '../../../services/session';
 import { PreferencesService } from '../../../services/preferences';
+import { localizeAddress } from '../../../utils/bd-geo';
 import { createPager } from '../../../components/table-pagination/pagination';
 import { TablePagination } from '../../../components/table-pagination/table-pagination';
 import { localDateIso } from '../../../utils/local-date';
@@ -172,7 +173,7 @@ const MODE_META: Record<LedgerPayment['mode'], { label: string; icon: string; ti
                   <td class="p-2.5"><div class="max-w-[220px] truncate" [title]="p.note">{{ p.note || '-' }}</div></td>
                   <td class="p-2.5 text-center">
                     <div class="flex items-center justify-center gap-1">
-                      @if (session.has('deleteRecords') && !p.batteryFundTransferId) {
+                      @if (session.has('deleteRecords') && canEditMoney() && !p.batteryFundTransferId) {
                         <button (click)="openEdit(p)" class="rounded-md p-1 text-teal-700 transition hover:bg-teal-100 dark:text-teal-300 dark:hover:bg-teal-950/50 cursor-pointer" [title]="prefs.txt('ভাউচার সংশোধন করুন — নম্বর অপরিবর্তিত থাকবে', 'Edit voucher — number stays the same')">
                           <mat-icon class="text-sm">edit</mat-icon>
                         </button>
@@ -237,7 +238,7 @@ const MODE_META: Record<LedgerPayment['mode'], { label: string; icon: string; ti
               <span class="max-w-[50%] truncate" [title]="p.note">{{ p.note || prefs.txt('নোট নেই', 'No note') }}</span>
             </div>
 
-            @if (session.has('deleteRecords') && !p.batteryFundTransferId) {
+            @if (session.has('deleteRecords') && canEditMoney() && !p.batteryFundTransferId) {
               <div class="grid grid-cols-2 gap-2">
                 <button (click)="openEdit(p)" class="inline-flex items-center justify-center gap-1 rounded-lg border border-teal-200 bg-teal-50 px-2 py-1.5 text-[11px] font-bold text-teal-700 transition hover:bg-teal-100 dark:border-teal-900 dark:bg-teal-950/50 dark:text-teal-300 dark:hover:bg-teal-900/50 cursor-pointer">
                   <mat-icon class="text-sm">edit</mat-icon> {{ prefs.txt('সংশোধন', 'Edit') }}
@@ -344,7 +345,7 @@ const MODE_META: Record<LedgerPayment['mode'], { label: string; icon: string; ti
                         <span class="inline-flex items-center gap-1"><mat-icon class="text-[14px]">business</mat-icon>{{ sp.companyName }}</span>
                       }
                       @if (sp.addressText || sp.address) {
-                        <span class="inline-flex min-w-0 items-center gap-1"><mat-icon class="text-[14px]">place</mat-icon><span class="truncate">{{ sp.addressText || sp.address }}</span></span>
+                        <span class="inline-flex min-w-0 items-center gap-1"><mat-icon class="text-[14px]">place</mat-icon><span class="truncate">{{ addr(sp.addressText || sp.address) }}</span></span>
                       }
                       <span class="inline-flex items-center gap-1"><mat-icon class="text-[14px]">verified_user</mat-icon>{{ sp.status }}</span>
                     </div>
@@ -613,6 +614,19 @@ export class PaymentOut {
   readonly session = inject(SessionService);
   readonly prefs = inject(PreferencesService);
 
+  addr(value?: string): string {
+    return localizeAddress(value, this.prefs.language());
+  }
+
+  /** Receipt correction changes a party's money; the owner lock and permission both apply. */
+  readonly canEditMoney = computed(() => {
+    const user = this.session.currentUser();
+    if (!user) return false;
+    if (this.session.isMain(user)) return true;
+    if (this.dataService.voucherSettings().lockPartyMoney) return false;
+    return user.role === 'Admin' || this.session.has('editPartyMoney');
+  });
+
   readonly tabs = computed(() => [
     { value: 'All', label: this.prefs.txt('সব', 'All'), icon: 'payments' },
     { value: 'Cash', label: this.prefs.txt('নগদ', 'Cash'), icon: 'attach_money' },
@@ -834,6 +848,10 @@ export class PaymentOut {
 
   /** Corrects a voucher without deleting it and losing the voucher number. */
   openEdit(payment: LedgerPayment) {
+    if (!this.canEditMoney()) {
+      this.notify.warning(this.prefs.txt('পার্টির টাকা এডিট মালিক লক করে রেখেছেন।', 'The owner has locked party money edits.'), this.prefs.txt('লক করা আছে', 'Locked'));
+      return;
+    }
     if (payment.batteryFundTransferId) {
       this.notify.error(
         this.prefs.txt('এটি ব্যাটারি স্টক ফান্ড থেকে দেওয়া — ব্যাটারি লেজার থেকে ফান্ড ট্রান্সফারটি ফিরিয়ে নিন।', 'This came from the battery stock fund — reverse the fund transfer from the battery ledger.'),
@@ -905,6 +923,10 @@ export class PaymentOut {
   }
 
   async deleteRecord(id: number) {
+    if (!this.canEditMoney()) {
+      this.notify.warning(this.prefs.txt('পার্টির টাকা এডিট মালিক লক করে রেখেছেন।', 'The owner has locked party money edits.'), this.prefs.txt('লক করা আছে', 'Locked'));
+      return;
+    }
     const row = this.dataService.payments().find(p => p.id === id);
     if (row?.batteryFundTransferId) {
       this.notify.error(

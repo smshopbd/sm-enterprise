@@ -25,6 +25,21 @@ const FIRST_SPLASH_MIN_MS = 2600;
 /** A dead or throttled network must not hold the app on the splash forever. */
 const STARTUP_SYNC_TIMEOUT_MS = 20_000;
 const FIRST_RUN_KEY = 'sm_first_boot_v1';
+/** Tabs stay open all day, so ask the server for a published build regularly. */
+const UPDATE_CHECK_MS = 5 * 60 * 1000;
+/** How often a downloaded build retries once the page becomes safe to reload. */
+const UPDATE_RETRY_MS = 5_000;
+/** Never swap a build right after a save; the splash would look like a freeze. */
+const UPDATE_QUIET_MS = 20_000;
+/** Remember which build was already swapped so a stale worker cannot reload-loop. */
+const UPDATE_GUARD_KEY = 'sm_update_swapped_v1';
+/** A corrupt install may repair itself once a minute, not in a reload loop. */
+const RECOVERY_GUARD_KEY = 'sm_update_recovery_v1';
+
+/** Routed form pages expose this so a reload can be held back mid-entry. */
+interface UnsavedAware {
+  hasUnsavedWork?: () => boolean;
+}
 
 const RESTRICTED: { prefix: string; area: 'reports' | 'accounts' | 'settings' | 'users' | 'pos' | 'hrm' }[] = [
   { prefix: '/reports', area: 'reports' },
@@ -57,8 +72,14 @@ export class App {
   /** Absent in dev builds and on the server, where no service worker exists. */
   private readonly swUpdate = inject(SwUpdate, { optional: true });
 
-  /** A downloaded build waiting for the user to accept the reload. */
+  /** A downloaded build waiting for the tab to be safe to reload. */
   readonly updateReady = signal(false);
+  private swapTimer: ReturnType<typeof setInterval> | undefined;
+  /** Live page instance, used to check whether anything is half-typed. */
+  private outletPage: UnsavedAware | null = null;
+  private pendingUpdateHash = '';
+  /** A save's writes finish with dialogs closed, so the reload waits for calm. */
+  private lastDataWriteAt = 0;
 
   /** Data pull for the page on screen, shown as a slim line above the content. */
   readonly pageLoading = this.pages.loading;
@@ -92,14 +113,41 @@ export class App {
     // The session is device-wide: every tab and reload keeps the login until
     // the user signs out (or their account is changed remotely).
     this.searchable.start();
+    // A swap immediately after a save shows the splash over the success screen,
+    // which reads as a frozen app. Cloud config and session writes do not count.
+    this.storage.onWrite(key => {
+      if (key.startsWith('sm_cloud_') || key === 'sm_session_v1' || key === 'sm_device_key_v1') return;
+      this.lastDataWriteAt = Date.now();
+    });
 
-    // A downloaded build stays dormant until the user taps; reloading on its
-    // own could wipe a half-entered sale.
+    // A published build is picked up and swapped in without the user clearing
+    // the browser cache; the service worker drops the old caches on activation.
+    // The reload itself waits until no half-entered sale or open dialog would
+    // be lost.
     if (this.swUpdate?.isEnabled) {
       this.swUpdate.versionUpdates
         .pipe(filter(event => event.type === 'VERSION_READY'))
-        .subscribe(() => this.updateReady.set(true));
+        .subscribe(event => this.queueUpdate((event as { latest?: { hash?: string } }).latest?.hash ?? ''));
+      // A broken install (usually a stale cache mix after a deploy) is only
+      // repaired by loading the freshly published files again.
+      this.swUpdate.unrecoverable.subscribe(() => this.reloadForRecovery());
       void this.swUpdate.checkForUpdate().catch(() => undefined);
+      if (typeof window !== 'undefined') {
+        window.setInterval(() => {
+          if (document.visibilityState === 'visible') {
+            void this.swUpdate!.checkForUpdate().catch(() => undefined);
+          }
+        }, UPDATE_CHECK_MS);
+        // A tab coming back into view checks immediately; one going away can
+        // take the update safely since nobody is typing into it.
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') {
+            void this.swUpdate!.checkForUpdate().catch(() => undefined);
+          } else {
+            this.applyUpdateIfSafe();
+          }
+        });
+      }
     }
 
     this.router.events
@@ -135,11 +183,118 @@ export class App {
   }
 
   applyUpdate(): void {
+    this.updateReady.set(false);
+    this.stopSwapTimer();
+    // If this build is still the waiting one after the reload, the automatic
+    // path stays off and only the banner can try again.
+    this.rememberSwappedBuild();
     if (!this.swUpdate) {
-      window.location.reload();
+      this.reloadNow();
       return;
     }
-    void this.swUpdate.activateUpdate().then(() => window.location.reload());
+    // Even if activation reports a problem, a reload re-checks the manifest and
+    // serves whichever build is complete.
+    void this.swUpdate.activateUpdate()
+      .then(() => this.reloadNow())
+      .catch(() => this.reloadNow());
+  }
+
+  /** The routed page changed; remember it so a reload never drops its typing. */
+  onPageActivate(component: unknown): void {
+    this.outletPage = (component ?? null) as UnsavedAware | null;
+  }
+
+  /** A new build finished downloading: swap as soon as the screen is safe. */
+  private queueUpdate(hash: string): void {
+    this.pendingUpdateHash = hash;
+    this.updateReady.set(true);
+    this.applyUpdateIfSafe();
+    this.swapTimer ??= setInterval(() => this.applyUpdateIfSafe(), UPDATE_RETRY_MS);
+  }
+
+  private applyUpdateIfSafe(): void {
+    if (!this.updateReady()) {
+      this.stopSwapTimer();
+      return;
+    }
+    // The same build becoming ready again right after a swap means the worker
+    // still serves the old files; reloading again would only loop the splash.
+    if (this.sameBuildWasSwapped()) {
+      this.stopSwapTimer();
+      return;
+    }
+    if (!this.canSwapNow()) return;
+    this.applyUpdate();
+  }
+
+  private stopSwapTimer(): void {
+    if (this.swapTimer === undefined) return;
+    clearInterval(this.swapTimer);
+    this.swapTimer = undefined;
+  }
+
+  /** Reloading discards whatever is typed into the open page or dialog. */
+  private canSwapNow(): boolean {
+    if (typeof document === 'undefined') return false;
+    // A save closes its dialog and clears focus, so without this the success
+    // screen would be replaced by the startup splash within seconds.
+    if (Date.now() - this.lastDataWriteAt < UPDATE_QUIET_MS) return false;
+    if (this.outletPage?.hasUnsavedWork?.()) return false;
+    if (this.hasOpenDialog()) return false;
+    // An empty focused box (login, search) is not work in progress.
+    return !this.hasTypedValue(document.activeElement as HTMLElement | null);
+  }
+
+  private rememberSwappedBuild(): void {
+    if (!this.pendingUpdateHash) return;
+    try {
+      localStorage.setItem(UPDATE_GUARD_KEY, JSON.stringify({ hash: this.pendingUpdateHash, at: Date.now() }));
+    } catch {
+      /* private mode */
+    }
+  }
+
+  /** A stale worker re-offers the build it already tried to swap. */
+  private sameBuildWasSwapped(): boolean {
+    if (!this.pendingUpdateHash) return false;
+    try {
+      const saved = JSON.parse(localStorage.getItem(UPDATE_GUARD_KEY) ?? 'null') as { hash?: string; at?: number } | null;
+      return !!saved?.hash && saved.hash === this.pendingUpdateHash
+        && Date.now() - Number(saved.at ?? 0) < 10 * 60_000;
+    } catch {
+      return false;
+    }
+  }
+
+  /** A corrupt install gets one repair reload a minute instead of a loop. */
+  private reloadForRecovery(): void {
+    try {
+      const last = Number(sessionStorage.getItem(RECOVERY_GUARD_KEY) ?? '0');
+      if (Date.now() - last < 60_000) return;
+      sessionStorage.setItem(RECOVERY_GUARD_KEY, String(Date.now()));
+    } catch {
+      /* private mode */
+    }
+    this.reloadNow();
+  }
+
+  /** Dropdown panels keep hidden dialogs in the DOM, so only visible ones count. */
+  private hasOpenDialog(): boolean {
+    const dialogs = document.querySelectorAll<HTMLElement>('mat-dialog-container, [role="dialog"]');
+    return Array.from(dialogs).some(el => el.getClientRects().length > 0
+      && getComputedStyle(el).visibility !== 'hidden');
+  }
+
+  private hasTypedValue(el: HTMLElement | null): boolean {
+    if (!el) return false;
+    if (el.isContentEditable) return (el.textContent ?? '').trim().length > 0;
+    if (el instanceof HTMLSelectElement) return true;
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value.trim().length > 0;
+    return false;
+  }
+
+  private reloadNow(): void {
+    if (typeof window !== 'undefined') window.location.reload();
   }
 
   /**

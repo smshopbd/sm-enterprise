@@ -34,7 +34,7 @@ function setup() {
           voucherSettings: () => ({ businessNamePart1: 'SM', businessNamePart2: 'Enterprise', address: '', mobile: '' })
         }
       },
-      { provide: SessionService, useValue: { log: () => undefined } },
+      { provide: SessionService, useValue: { log: () => undefined, currentUser: () => null, isMain: () => false, has: () => false } },
       { provide: PreferencesService, useValue: { txt: (_bn: string, en: string) => en, t: (key: string) => key } }
     ]
   });
@@ -79,7 +79,7 @@ function ledgerSetup(role: 'Admin' | 'Salesman') {
       { provide: PreferencesService, useValue: { txt: (_bn: string, en: string) => en, t: (key: string) => key, language: () => 'en' } },
       { provide: NotificationService, useValue: { show: () => undefined, success: () => undefined, error: () => undefined } },
       { provide: CloudService, useValue: { isEnabled: () => false } },
-      { provide: SessionService, useValue: { log: () => undefined, currentUser: () => ({ role }) } }
+      { provide: SessionService, useValue: { log: () => undefined, currentUser: () => ({ role }), isMain: () => false, has: () => false } }
     ]
   });
   const data = TestBed.inject(DataService);

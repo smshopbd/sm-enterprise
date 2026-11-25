@@ -22,7 +22,7 @@ import { createPager } from '../../components/table-pagination/pagination';
 import { TablePagination } from '../../components/table-pagination/table-pagination';
 import { localDateIso } from '../../utils/local-date';
 import { downloadPartyDocx } from '../../utils/party-docx';
-import { geoDivisionOfDistrict, geoNormalizeDistrict } from '../../utils/bd-geo';
+import { geoDivisionOfDistrict, geoNormalizeDistrict, localizeAddress, stripRegionNames } from '../../utils/bd-geo';
 import {
   ColumnLayout, ColumnSpec, ResolvedColumn,
   clampLayoutWidth, defaultColumnLayout, loadColumnLayout, saveColumnLayout
@@ -388,7 +388,7 @@ const PARTY_SORTABLE = new Set(['company', 'name', 'type', 'total', 'paid', 'due
                       }
                       @case ('address') {
                         <td class="p-2.5 text-slate-600 dark:text-slate-300">
-                          <div class="truncate" [title]="p.address">{{ p.address || '-' }}</div>
+                          <div class="truncate" [title]="addressLabel(p)">{{ addressLabel(p) }}</div>
                         </td>
                       }
                       @case ('action') {
@@ -403,7 +403,7 @@ const PARTY_SORTABLE = new Set(['company', 'name', 'type', 'total', 'paid', 'due
                             <button (click)="$event.stopPropagation(); payParty(p)" class="p-1 text-emerald-600 hover:bg-emerald-100 rounded cursor-pointer" [title]="prefs.txt('জমা রেকর্ড করুন', 'Record Payment')">
                               <mat-icon class="text-sm">attach_money</mat-icon>
                             </button>
-                            @if (isAdmin()) {
+                            @if (canEditPartyMoney()) {
                               <button (click)="$event.stopPropagation(); openBalanceDialog(p)" class="p-1 text-sky-600 hover:bg-sky-100 rounded cursor-pointer" [title]="prefs.txt('ওপেনিং ব্যালেন্স সংশোধন (অ্যাডমিন)', 'Correct opening balance (admin)')">
                                 <mat-icon class="text-sm">currency_exchange</mat-icon>
                               </button>
@@ -492,7 +492,7 @@ const PARTY_SORTABLE = new Set(['company', 'name', 'type', 'total', 'paid', 'due
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500 dark:text-slate-400">
                   <span class="inline-flex items-center gap-1" [title]="phoneListTitle(p)"><mat-icon class="text-xs">call</mat-icon>{{ phoneSummary(p) }}</span>
                   <span class="inline-flex items-center gap-1"><mat-icon class="text-xs">event</mat-icon>{{ displayDate(p.createdAt) }}</span>
-                  <span class="inline-flex min-w-0 items-center gap-1"><mat-icon class="text-xs">location_on</mat-icon><span class="truncate">{{ p.address || '-' }}</span></span>
+                  <span class="inline-flex min-w-0 items-center gap-1"><mat-icon class="text-xs">location_on</mat-icon><span class="truncate">{{ addressLabel(p) }}</span></span>
                 </div>
 
                 <div class="mt-auto flex items-center gap-1">
@@ -505,7 +505,7 @@ const PARTY_SORTABLE = new Set(['company', 'name', 'type', 'total', 'paid', 'due
                   <button (click)="openEditModal(p)" class="inline-flex items-center justify-center rounded-lg bg-amber-500 px-2 py-1.5 text-white hover:bg-amber-600 cursor-pointer" [title]="prefs.txt('এডিট', 'Edit')">
                     <mat-icon class="text-sm">edit</mat-icon>
                   </button>
-                  @if (isAdmin()) {
+                  @if (canEditPartyMoney()) {
                     <button (click)="openBalanceDialog(p)" class="inline-flex items-center justify-center rounded-lg bg-sky-600 px-2 py-1.5 text-white hover:bg-sky-700 cursor-pointer" [title]="prefs.txt('ওপেনিং ব্যালেন্স সংশোধন', 'Correct opening balance')">
                       <mat-icon class="text-sm">currency_exchange</mat-icon>
                     </button>
@@ -598,7 +598,7 @@ const PARTY_SORTABLE = new Set(['company', 'name', 'type', 'total', 'paid', 'due
               <button (click)="openEditModal(p)" class="inline-flex items-center justify-center gap-1 bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-bold px-2 py-1.5 rounded-lg cursor-pointer">
                 <mat-icon class="text-sm">edit</mat-icon>
               </button>
-              @if (isAdmin()) {
+              @if (canEditPartyMoney()) {
                 <button (click)="openBalanceDialog(p)" class="inline-flex items-center justify-center gap-1 bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-bold px-2 py-1.5 rounded-lg cursor-pointer" [title]="prefs.txt('ওপেনিং ব্যালেন্স সংশোধন', 'Correct opening balance')">
                   <mat-icon class="text-sm">currency_exchange</mat-icon>
                 </button>
@@ -877,15 +877,15 @@ const PARTY_SORTABLE = new Set(['company', 'name', 'type', 'total', 'paid', 'due
                     <label class="block font-semibold mb-1 text-slate-700">{{ prefs.txt('প্রারম্ভিক ব্যালেন্স', 'Opening Balance') }}</label>
                     <div class="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden focus-within:ring-2 focus-within:ring-teal-500">
                       <span class="bg-slate-100 text-slate-600 font-bold px-2.5 py-1.5 border-r border-slate-300">TK</span>
-                      <input type="number" min="0" step="any" [(ngModel)]="formOpeningBalance" [disabled]="isEditMode() && !isAdmin()" class="w-full p-1.5 outline-none text-xs font-bold text-slate-900 disabled:bg-slate-50 disabled:text-slate-500">
-                      <select [(ngModel)]="formOpeningBalanceType" [disabled]="isEditMode() && !isAdmin()" class="bg-slate-50 border-l border-slate-300 px-2 py-1.5 text-xs text-slate-600 outline-none disabled:text-slate-400">
+                      <input type="number" min="0" step="any" [(ngModel)]="formOpeningBalance" [disabled]="!canEditPartyMoney()" class="w-full p-1.5 outline-none text-xs font-bold text-slate-900 disabled:bg-slate-50 disabled:text-slate-500">
+                      <select [(ngModel)]="formOpeningBalanceType" [disabled]="!canEditPartyMoney()" class="bg-slate-50 border-l border-slate-300 px-2 py-1.5 text-xs text-slate-600 outline-none disabled:text-slate-400">
                         <option value="Pay">{{ prefs.txt('পাব', 'Pay') }}</option>
                         <option value="Receive">{{ prefs.txt('দিব', 'Receive') }}</option>
                       </select>
                     </div>
                     @if (isEditMode()) {
                       <p class="mt-1 text-[10px] font-semibold text-slate-400">
-                        @if (isAdmin()) {
+                        @if (canEditPartyMoney()) {
                           {{ prefs.txt('বদলালে সেভের সময় অ্যাডমিন পাসওয়ার্ড লাগবে; বাকি সমান হারে সমন্বয় হবে, পুরোনো ভাউচার ও পেমেন্ট অপরিবর্তিত থাকবে।', 'Changing it needs the admin password on save; the due shifts by the same amount and old vouchers/payments stay untouched.') }}
                           <button type="button" (click)="fixOpeningFromEditForm()" class="ml-1 font-bold text-sky-600 hover:underline cursor-pointer dark:text-sky-400">{{ prefs.txt('বাকি দিয়ে সংশোধন', 'Fix by due') }}</button>
                         } @else {
@@ -959,21 +959,12 @@ const PARTY_SORTABLE = new Set(['company', 'name', 'type', 'total', 'paid', 'due
                   [(upazila)]="formThana">
                 </app-geo-select>
 
-                <!-- Row 5: Area / Road / House -->
+                <!-- Row 5: Road / House detail; division/district/upazila sit above. -->
                 <div>
-                  <label class="block font-medium mb-1 text-slate-600 text-[11px]">{{ prefs.txt('এলাকা / রোড / বাসা', 'Area / Road / House') }}</label>
+                  <label class="block font-medium mb-1 text-slate-600 text-[11px]">{{ prefs.txt('রোড / বাসা / এলাকা', 'Road / House / Area') }}</label>
                   <div class="flex items-center border border-slate-300 rounded-lg px-2 py-1.5 bg-white focus-within:ring-2 focus-within:ring-teal-500">
                     <mat-icon class="text-slate-400 text-sm mr-1.5">home</mat-icon>
-                    <input type="text" [(ngModel)]="formAreaRoadHouse" [placeholder]="prefs.txt('বাসা, রোড, এলাকা', 'House, road, area')" class="w-full bg-transparent outline-none text-xs font-medium text-slate-800">
-                  </div>
-                </div>
-
-                <!-- Row 6: Full address (free text) -->
-                <div>
-                  <label class="block font-medium mb-1 text-slate-600 text-[11px]">{{ prefs.txt('ঠিকানা', 'Full Address') }}</label>
-                  <div class="flex items-start border border-slate-300 rounded-lg px-2 py-1.5 bg-white focus-within:ring-2 focus-within:ring-teal-500">
-                    <mat-icon class="text-slate-400 text-sm mr-1.5 mt-0.5">location_on</mat-icon>
-                    <textarea [(ngModel)]="formAddressText" rows="2" [placeholder]="prefs.txt('বাসা/রোড, এলাকা, উপজেলা, জেলা লিখুন...', 'Enter house/road, area, upazila, district...')" class="w-full bg-transparent outline-none text-xs font-medium text-slate-800 resize-none"></textarea>
+                    <input type="text" [(ngModel)]="formAreaRoadHouse" [placeholder]="prefs.txt('যেমন: বাসা ১২, রোড ৩, সোনাডাঙ্গা', 'e.g. House 12, Road 3, Sonadanga')" class="w-full bg-transparent outline-none text-xs font-medium text-slate-800">
                   </div>
                 </div>
 
@@ -1113,7 +1104,7 @@ const PARTY_SORTABLE = new Set(['company', 'name', 'type', 'total', 'paid', 'due
     @if (liveLedgerParty(); as lp) {
       <app-party-ledger [party]="lp" [autoPay]="ledgerAutoPay()" [paymentOnly]="ledgerPaymentOnly()"
         [side]="activeTab() === 'All' ? undefined : (activeTab() === 'Supplier' ? 'purchase' : 'sales')"
-        [canFixOpening]="isAdmin()"
+        [canFixOpening]="canEditPartyMoney()"
         (close)="closeLedger()" (edit)="editFromProfile(lp)" (fixOpening)="fixOpeningFromProfile(lp)" />
     }
 
@@ -1162,6 +1153,21 @@ export class Parties {
   readonly sortKey = persistedSignal<string>(PARTY_SORT_KEY, '', value => typeof value === 'string' && PARTY_SORTABLE.has(value) ? value : '');
   readonly sortDir = persistedSignal<'asc' | 'desc'>(PARTY_SORT_DIR_KEY, 'asc', value => value === 'desc' ? 'desc' : 'asc');
   readonly isAdmin = computed(() => this.session.currentUser()?.role === 'Admin');
+
+  /** Owner, or an Admin/permitted user while the owner has not locked party money. */
+  readonly canEditPartyMoney = computed(() => {
+    const user = this.session.currentUser();
+    if (!user) return false;
+    if (this.session.isMain(user)) return true;
+    if (this.dataService.voucherSettings().lockPartyMoney) return false;
+    return user.role === 'Admin' || this.session.has('editPartyMoney');
+  });
+
+  /** An explicit grant replaces the admin-PIN prompt; role Admins still enter the PIN. */
+  private partyMoneyGrantedByPermission(): boolean {
+    const user = this.session.currentUser();
+    return !!user && Array.isArray(user.permissions) && user.permissions.includes('editPartyMoney');
+  }
 
   // Column order, visibility and widths are user-owned and survive a reload.
   showColumnSelector = signal<boolean>(false);
@@ -1237,7 +1243,6 @@ export class Parties {
   formDistrict = '';
   formThana = '';
   formAreaRoadHouse = '';
-  formAddressText = '';
   formGeofencing = false;
   nameError = signal('');
   phoneError = signal('');
@@ -1364,7 +1369,7 @@ export class Parties {
         company: (p.companyName || '').trim(),
         roles: this.rolesOf(p).map(role => this.typeLabel(role)).join(', ') || '—',
         phone: partyPhones(p).join(', ') || '—',
-        address: (p.address || '').trim() || '—',
+        address: localizeAddress(p.address, this.prefs.language()) || '—',
         total: account.total,
         paid: account.paid,
         due: account.due
@@ -1387,6 +1392,10 @@ export class Parties {
     const key = this.sortKey();
     if (!key) return this.prefs.txt('ডিফল্ট', 'Default');
     return `${this.colLabel(key)} · ${this.sortDir() === 'asc' ? this.prefs.txt('ঊর্ধ্বক্রম', 'asc') : this.prefs.txt('নিম্নক্রম', 'desc')}`;
+  }
+
+  addressLabel(p: Party): string {
+    return localizeAddress(p.address, this.prefs.language()) || '-';
   }
 
   typeLabel(type: Party['type']): string {
@@ -1654,7 +1663,6 @@ export class Parties {
     this.formDistrict = '';
     this.formThana = '';
     this.formAreaRoadHouse = '';
-    this.formAddressText = '';
     this.formGeofencing = false;
     this.nameError.set('');
     this.phoneError.set('');
@@ -1697,8 +1705,8 @@ export class Parties {
     this.formDistrict = geoNormalizeDistrict(p.district || '') || (p.district || '');
     this.formDivision = p.division || geoDivisionOfDistrict(p.district || '');
     this.formThana = p.upazila || p.thana || '';
-    this.formAreaRoadHouse = p.areaRoadHouse || (p.addressText ? '' : (p.address !== 'N/A' ? p.address : ''));
-    this.formAddressText = p.addressText || '';
+    this.formAreaRoadHouse = p.areaRoadHouse
+      || stripRegionNames(p.addressText || (p.address !== 'N/A' ? p.address : ''));
     this.formGeofencing = p.geofencing || false;
     this.nameError.set('');
     this.phoneError.set('');
@@ -1894,8 +1902,8 @@ export class Parties {
     const mappedType: PartyType = this.formTypes[0] ?? 'Customer';
     const roles: PartyType[] = [...this.formTypes];
 
-    const fullAddress = [this.formAddressText, this.formAreaRoadHouse, this.formThana, this.formDistrict, this.formDivision].filter(Boolean).join(', ') || 'N/A';
-    const opening = Number(this.formOpeningBalance) || 0;
+    const fullAddress = [this.formAreaRoadHouse, this.formThana, this.formDistrict, this.formDivision].filter(Boolean).join(', ') || 'N/A';
+    const opening = this.canEditPartyMoney() ? (Number(this.formOpeningBalance) || 0) : 0;
 
     if (this.isEditMode() && this.editingPartyId()) {
       const existing = this.dataService.parties().find(p => p.id === this.editingPartyId());
@@ -1910,9 +1918,17 @@ export class Parties {
         const openingChanged = Math.abs(newSigned - oldSigned) >= 0.005;
         // A changed opening is a balance rewrite, so it needs the admin password.
         if (openingChanged && !this.openingSaveUnlocked) {
-          if (!this.isAdmin()) return;
-          this.openingSaveUnlock.set(true);
-          return;
+          if (!this.canEditPartyMoney()) {
+            this.notify.warning(
+              this.prefs.txt('পার্টির টাকা এডিট মালিক লক করে রেখেছেন। মালিককে জানান।', 'The owner has locked party money edits. Ask the owner.'),
+              this.prefs.txt('লক করা আছে', 'Locked')
+            );
+            return;
+          }
+          if (!this.partyMoneyGrantedByPermission()) {
+            this.openingSaveUnlock.set(true);
+            return;
+          }
         }
         let salesDue = salesAccountOf(existing).due;
         let purchaseDue = purchaseAccountOf(existing).due;
@@ -1953,9 +1969,10 @@ export class Parties {
           division: this.formDivision,
           district: this.formDistrict,
           upazila: this.formThana,
-          thana: this.formThana,
+          // Thana and upazila are the same level, so keep one copy only.
+          thana: undefined,
           areaRoadHouse: this.formAreaRoadHouse,
-          addressText: this.formAddressText || undefined,
+          addressText: undefined,
           zone: this.formDistrict || existing.zone,
           geofencing: this.formGeofencing
         });
@@ -2011,9 +2028,7 @@ export class Parties {
         division: this.formDivision,
         district: this.formDistrict,
         upazila: this.formThana,
-        thana: this.formThana,
         areaRoadHouse: this.formAreaRoadHouse,
-        addressText: this.formAddressText || undefined,
         geofencing: this.formGeofencing
       });
       this.session.log('Party Created', `${cleanName} — ${mappedType} — ওপেনিং ${opening}`);
@@ -2073,7 +2088,7 @@ export class Parties {
   }
 
   openBalanceDialog(p: Party) {
-    if (!this.isAdmin()) return;
+    if (!this.canEditPartyMoney()) return;
     const live = this.dataService.parties().find(party => party.id === p.id) ?? p;
     const side = this.openingSideFor(partyRoles(live));
     const currentDue = accountOf(live, side).due;
@@ -2094,7 +2109,7 @@ export class Parties {
   /** Validates the form, then asks for the admin password before touching the books. */
   requestBalanceCorrection() {
     const party = this.balanceDialogParty();
-    if (!party || !this.isAdmin()) return;
+    if (!party || !this.canEditPartyMoney()) return;
     const amount = Number(this.balanceFormAmount);
     if (!Number.isFinite(amount) || amount < 0) {
       this.balanceError.set(this.prefs.txt('সঠিক বাকি লিখুন (শূন্য বা বেশি)।', 'Enter a valid due (zero or more).'));
@@ -2105,12 +2120,17 @@ export class Parties {
       return;
     }
     this.balanceError.set('');
+    // A user the owner explicitly granted party-money rights does not need the admin PIN.
+    if (this.partyMoneyGrantedByPermission()) {
+      this.confirmBalanceCorrection();
+      return;
+    }
     this.balanceUnlock.set(true);
   }
 
   /** Password verified for an opening change typed in the edit form; save again unlocked. */
   confirmOpeningSave() {
-    if (!this.isAdmin()) return;
+    if (!this.canEditPartyMoney()) return;
     this.openingSaveUnlock.set(false);
     this.openingSaveUnlocked = true;
     try {
@@ -2123,7 +2143,7 @@ export class Parties {
   confirmBalanceCorrection() {
     this.balanceUnlock.set(false);
     const party = this.balanceDialogParty();
-    if (!party || !this.isAdmin()) return;
+    if (!party || !this.canEditPartyMoney()) return;
     const reason = this.balanceFormReason.trim();
     const existing = this.dataService.parties().find(p => p.id === party.id) ?? party;
     const side = this.openingSideFor(partyRoles(existing));

@@ -91,14 +91,14 @@
       <!-- Main Viewport Router Outlet -->
       <main class="app-scroll flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 md:p-6 bg-slate-50 dark:bg-slate-950 transition-all duration-200">
         <div class="page-shell" [class.page-enter]="pageAnimating()">
-          <router-outlet />
+          <router-outlet (activate)="onPageActivate($event)" />
         </div>
       </main>
     </div>
     @if (updateReady()) {
       <div class="fixed bottom-4 left-1/2 z-[1200] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-center gap-3 rounded-xl border border-teal-400/40 bg-slate-900 px-4 py-3 text-xs font-bold text-white shadow-2xl" role="status">
         <span class="h-2 w-2 shrink-0 animate-pulse rounded-full bg-teal-400" aria-hidden="true"></span>
-        <span class="flex-1">{{ prefs.txt('নতুন ভার্সন প্রস্তুত — আপডেট করলে নতুন ফিচার পাবেন।', 'A new version is ready — update to get the latest fixes.') }}</span>
+        <span class="flex-1">{{ prefs.txt('নতুন ভার্সন প্রস্তুত — কাজ শেষ হলে নিজেই আপডেট হবে, অথবা এখনই আপডেট করুন।', 'A new version is ready — it updates itself once you are free, or tap to update now.') }}</span>
         <button (click)="applyUpdate()" class="cursor-pointer rounded-lg bg-teal-500 px-3 py-1.5 text-[11px] font-black text-white hover:bg-teal-400">
           {{ prefs.txt('আপডেট', 'Update') }}
         </button>

@@ -140,6 +140,25 @@ describe('DataService inventory and ledger lifecycles', () => {
     expect(data.products()[0].stock).toBe(0);
   });
 
+  it('refuses a received purchase line whose product is missing instead of silently dropping stock', () => {
+    const { data } = setup();
+    data.products.set([product()]);
+    expect(() => purchase(data, {
+      items: [{ id: 1, productId: 999, productName: 'Missing washer', itemCode: 'W10', unit: 'pcs', quantity: 10, purchasePrice: 150, subtotal: 1500 }]
+    })).toThrow('পণ্য পাওয়া যায়নি');
+    expect(data.purchases()).toHaveLength(0);
+    expect(data.products()[0].stock).toBe(5);
+  });
+
+  it('links a purchase line to a recreated product by its item code', () => {
+    const { data } = setup();
+    data.products.set([product({ id: 77, code: 'W10', stock: 0 })]);
+    purchase(data, {
+      items: [{ id: 1, productId: 12, productName: 'Old washer', itemCode: 'W10', unit: 'pcs', quantity: 10, purchasePrice: 150, subtotal: 1500 }]
+    });
+    expect(data.products()[0].stock).toBe(10);
+  });
+
   it('sets the product cost to the rate a received purchase was bought at', () => {
     const { data } = setup();
     data.products.set([product({ purchasePrice: 80 })]);
@@ -173,8 +192,38 @@ describe('DataService inventory and ledger lifecycles', () => {
     expect(data.products()[0].purchasePrice).toBe(70);
   });
 
+  it('does not re-post party money when only a purchase date changes', () => {
+    const { data } = setup();
+    data.products.set([product({ stock: 10 })]);
+    data.parties.set([party({ id: 2, name: 'Supplier', type: 'Supplier', roles: ['Supplier'], purchaseDue: 500 })]);
+    const received = purchase(data);
+    const partyBefore = data.parties()[0];
+    expect(data.partyOpeningBalance(partyBefore, 'purchase')).toBe(500);
+
+    data.updatePurchase(received.id, { ...received, date: '2026-11-01' });
+
+    expect(data.purchases()[0].date).toBe('2026-11-01');
+    expect(data.parties()[0]).toBe(partyBefore);
+    expect(data.partyOpeningBalance(data.parties()[0], 'purchase')).toBe(500);
+  });
+
+  it('posts only the changed money when a purchase amount is edited', () => {
+    const { data } = setup();
+    data.products.set([product({ stock: 10 })]);
+    data.parties.set([party({ id: 2, name: 'Supplier', type: 'Supplier', roles: ['Supplier'], purchaseDue: 500 })]);
+    const received = purchase(data);
+
+    data.updatePurchase(received.id, { ...received, total: 200, paid: 40, due: 160 });
+
+    expect(data.parties()[0].purchaseTotal).toBe(200);
+    expect(data.parties()[0].purchasePaid).toBe(40);
+    expect(data.parties()[0].purchaseDue).toBe(660);
+    expect(data.partyOpeningBalance(data.parties()[0], 'purchase')).toBe(500);
+  });
+
   it('starts the purchase voucher book at PUR-3001 and counts up from there', () => {
     const { data } = setup();
+    data.products.set([product()]);
     expect(data.nextPurchaseInvoice()).toBe('PUR-3001');
     purchase(data, { invoice: 'PUR-3004' });
     expect(data.nextPurchaseInvoice()).toBe('PUR-3005');
@@ -182,6 +231,7 @@ describe('DataService inventory and ledger lifecycles', () => {
 
   it('ignores old five-digit purchase numbers when numbering fresh vouchers', () => {
     const { data } = setup();
+    data.products.set([product()]);
     purchase(data, { invoice: 'PUR-30903' });
     expect(data.nextPurchaseInvoice()).toBe('PUR-3001');
   });
@@ -197,6 +247,28 @@ describe('DataService inventory and ledger lifecycles', () => {
     const edited = data.updateSale(original.id, { ...original, notes: 'Edited note only' });
     expect(edited.due).toBe(80);
     expect(accountOf(data.parties()[0], 'sales').due).toBe(80);
+  });
+
+  it('preserves POS-only fields when a sale is edited through a narrower form', () => {
+    const { data } = setup();
+    data.products.set([product({ stock: 10 })]);
+    const original = sale(data, {
+      total: 118, memoNote: 'Deliver after 5pm', taxAmount: 11, damageAmount: 7,
+      paymentMode: 'bKash', warehouse: 'Branch', mechanic: 'Rahim'
+    });
+    const payload: Partial<Sale> = { ...original };
+    delete payload.id;
+    delete payload.memoNote;
+    delete payload.taxAmount;
+    delete payload.damageAmount;
+    delete payload.paymentMode;
+    delete payload.mechanic;
+
+    const edited = data.updateSale(original.id, payload as Omit<Sale, 'id'>);
+    expect(edited).toMatchObject({
+      memoNote: 'Deliver after 5pm', taxAmount: 11, damageAmount: 7,
+      paymentMode: 'bKash', warehouse: 'Branch', mechanic: 'Rahim'
+    });
   });
 
   it('reverses a sale against the stable party id after the party is renamed', () => {
@@ -323,6 +395,40 @@ describe('QR mode', () => {
   it('keeps a saved text QR choice', () => {
     const { data } = setup();
     expect(data.normalizeVoucherSettings({ ...data.defaultVoucherSettings, qrMode: 'text' }).qrMode).toBe('text');
+  });
+});
+
+describe('Voucher column borders', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  it('defaults to on for settings saved before the switch existed', () => {
+    const { data } = setup();
+    const legacy: Partial<VoucherSettings> = { ...data.defaultVoucherSettings };
+    delete legacy.showColumnBorders;
+    expect(data.normalizeVoucherSettings(legacy as VoucherSettings).showColumnBorders).toBe(true);
+  });
+});
+
+describe('Owner edit locks', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  it('defaults both locks to off for settings saved before the switches existed', () => {
+    const { data } = setup();
+    const legacy: Partial<VoucherSettings> = { ...data.defaultVoucherSettings };
+    delete legacy.lockPartyMoney;
+    delete legacy.lockStock;
+    const normalized = data.normalizeVoucherSettings(legacy as VoucherSettings);
+    expect(normalized.lockPartyMoney).toBe(false);
+    expect(normalized.lockStock).toBe(false);
+  });
+
+  it('keeps a lock the owner turned on', () => {
+    const { data } = setup();
+    const normalized = data.normalizeVoucherSettings({
+      ...data.defaultVoucherSettings, lockPartyMoney: true, lockStock: true
+    });
+    expect(normalized.lockPartyMoney).toBe(true);
+    expect(normalized.lockStock).toBe(true);
   });
 });
 

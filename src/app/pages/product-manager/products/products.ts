@@ -14,7 +14,7 @@ import { PasscodeModal } from '../../../components/passcode-modal/passcode-modal
 import { parseVariationValues } from '../../../utils/variation-values';
 import { hasProductModel, joinProductModels, productModelsOf, toggleProductModel } from '../../../utils/product-models';
 import { NO_IMAGE } from '../../../utils/no-image';
-import { ProductSearchEntry, searchProductEntries, searchProducts, variantLabel } from '../../../utils/product-search';
+import { searchProducts } from '../../../utils/product-search';
 import { reorderInView } from '../../../utils/reorder';
 import { DmyDateDirective } from '../../../directives/dmy-date.directive';
 import { scrollToListTopAfterRender } from '../../../utils/scroll-to-list-top';
@@ -480,6 +480,9 @@ const PRODUCT_TABLE_VIEW_KEY = 'sm_products_table_view_v1';
                             <img [src]="p.image || noImage" alt="p" class="w-10 h-10 rounded-lg object-cover bg-slate-100 shrink-0" loading="lazy" decoding="async">
                             <div class="min-w-0">
                               <p [title]="hoverText(p)" class="min-w-0 font-semibold text-[12.5px] text-slate-800 leading-snug whitespace-normal break-words group-hover:text-teal-800 transition-colors">{{ p.name }}</p>
+                              @if (p.variants?.length) {
+                                <span class="mt-0.5 block text-[9.5px] font-semibold text-violet-600 dark:text-violet-300">{{ p.variants!.length }} {{ prefs.txt("ভ্যারিয়েন্ট", "variants") }}</span>
+                              }
                             </div>
                           </div>
                         </td>
@@ -641,6 +644,9 @@ const PRODUCT_TABLE_VIEW_KEY = 'sm_products_table_view_v1';
 
               <div class="flex flex-wrap gap-1">
                 <span class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[9.5px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{{ p.category }}</span>
+                @if (p.variants?.length) {
+                  <span class="rounded-md bg-violet-50 px-1.5 py-0.5 text-[9.5px] font-semibold text-violet-700 ring-1 ring-inset ring-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/30">{{ p.variants!.length }} {{ prefs.txt('ভ্যারিয়েন্ট', 'variants') }}</span>
+                }
                 @if (p.subCategory) {
                   <span class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[9.5px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">{{ p.subCategory }}</span>
                 }
@@ -1150,7 +1156,13 @@ const PRODUCT_TABLE_VIEW_KEY = 'sm_products_table_view_v1';
                     <mat-icon class="text-sm">qr_code_scanner</mat-icon>
                   </button>
                 </div>
-                <p class="mt-1 text-[10px] text-slate-400">{{ prefs.txt("ইউনিক হতে হবে; আইকনে চাপলে অটো কোড তৈরি হবে।", "Must be unique; tap the icon to generate one.") }}</p>
+                <p class="mt-1 text-[10px] text-slate-400">
+                  @if (isEditMode()) {
+                    {{ prefs.txt("কোড না বদলেই হালনাগাদ করতে পারবেন — শুধু অন্য পণ্যের সাথে মিলে গেলে কোড বদলাতে হবে।", "You can update without changing the code — change it only if it clashes with another product.") }}
+                  } @else {
+                    {{ prefs.txt("ইউনিক হতে হবে; আইকনে চাপলে অটো কোড তৈরি হবে।", "Must be unique; tap the icon to generate one.") }}
+                  }
+                </p>
               </div>
             </div>
 
@@ -1401,7 +1413,7 @@ const PRODUCT_TABLE_VIEW_KEY = 'sm_products_table_view_v1';
                       </label>
                       <div class="flex items-center border border-slate-300 rounded-lg px-2.5 py-1.5 bg-slate-50 focus-within:bg-white focus-within:ring-2 focus-within:ring-teal-500">
                         <mat-icon class="text-slate-400 text-sm mr-2">inventory_2</mat-icon>
-                        <input type="number" min="0" [(ngModel)]="formCurrentStock" placeholder="0" class="w-full bg-transparent outline-none text-xs font-mono font-bold text-slate-800">
+                        <input type="number" min="0" [(ngModel)]="formCurrentStock" placeholder="0" [disabled]="!canEditStock()" class="w-full bg-transparent outline-none text-xs font-mono font-bold text-slate-800 disabled:text-slate-500">
                         <span class="text-[10px] font-bold text-slate-400 ml-2">{{ formUnit }}</span>
                       </div>
                     </div>
@@ -1413,7 +1425,7 @@ const PRODUCT_TABLE_VIEW_KEY = 'sm_products_table_view_v1';
                           {{ openingUnlocked() ? prefs.txt('অ্যাডমিন আনলক', 'Admin unlocked') : prefs.txt('শুধু অ্যাডমিন', 'Admin only') }}
                         </span>
                       </label>
-                      @if (openingUnlocked()) {
+                      @if (openingUnlocked() && canEditStock()) {
                         <div class="space-y-1.5">
                           <div class="flex items-center border-2 border-teal-400 rounded-lg px-2.5 py-1.5 bg-white focus-within:ring-2 focus-within:ring-teal-500">
                             <mat-icon class="text-teal-600 text-sm mr-2">subtitles</mat-icon>
@@ -1433,9 +1445,11 @@ const PRODUCT_TABLE_VIEW_KEY = 'sm_products_table_view_v1';
                         <div class="flex items-center border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-100">
                           <mat-icon class="text-slate-400 text-sm mr-2">lock</mat-icon>
                           <span class="w-full font-mono font-bold text-xs text-slate-700">{{ formOpeningStock === '' ? '0' : formOpeningStock }} {{ formUnit }} · {{ formOpeningStockDate || '—' }}</span>
-                          <button type="button" (click)="askOpeningUnlock('product')" class="shrink-0 inline-flex items-center gap-0.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-800 hover:bg-amber-100 cursor-pointer transition-colors">
-                            <mat-icon style="font-size:12px;width:12px;height:12px;">key</mat-icon> {{ prefs.txt('আনলক', 'Unlock') }}
-                          </button>
+                          @if (canEditStock()) {
+                            <button type="button" (click)="askOpeningUnlock('product')" class="shrink-0 inline-flex items-center gap-0.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-800 hover:bg-amber-100 cursor-pointer transition-colors">
+                              <mat-icon style="font-size:12px;width:12px;height:12px;">key</mat-icon> {{ prefs.txt('আনলক', 'Unlock') }}
+                            </button>
+                          }
                         </div>
                       }
                     </div>
@@ -1447,7 +1461,7 @@ const PRODUCT_TABLE_VIEW_KEY = 'sm_products_table_view_v1';
                       <label class="block font-medium mb-1.5 text-slate-700">{{ prefs.txt("প্রারম্ভিক স্টক", "Opening Stock") }}</label>
                       <div class="flex items-center border border-slate-300 rounded-lg px-2.5 py-1.5 bg-slate-50 focus-within:bg-white focus-within:ring-2 focus-within:ring-teal-500">
                         <mat-icon class="text-slate-400 text-sm mr-2">subtitles</mat-icon>
-                        <input type="number" min="0" [(ngModel)]="formOpeningStock" placeholder="0" class="w-full bg-transparent outline-none text-xs font-mono font-bold text-slate-800">
+                        <input type="number" min="0" [(ngModel)]="formOpeningStock" placeholder="0" [disabled]="!canEditStock()" class="w-full bg-transparent outline-none text-xs font-mono font-bold text-slate-800 disabled:text-slate-500">
                       </div>
                     </div>
 
@@ -1455,7 +1469,7 @@ const PRODUCT_TABLE_VIEW_KEY = 'sm_products_table_view_v1';
                       <label class="block font-medium mb-1.5 text-slate-700">{{ prefs.txt("প্রারম্ভিক স্টকের তারিখ", "Opening Stock Date") }}</label>
                       <div class="flex items-center border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white focus-within:ring-2 focus-within:ring-teal-500">
                         <mat-icon class="text-slate-400 text-sm mr-2">calendar_today</mat-icon>
-                        <input type="date" appDmyDate [(ngModel)]="formOpeningStockDate" class="w-full bg-transparent outline-none text-xs font-medium text-slate-800">
+                        <input type="date" appDmyDate [(ngModel)]="formOpeningStockDate" [disabled]="!canEditStock()" class="w-full bg-transparent outline-none text-xs font-medium text-slate-800 disabled:text-slate-500">
                       </div>
                     </div>
                   </div>
@@ -2169,13 +2183,13 @@ const PRODUCT_TABLE_VIEW_KEY = 'sm_products_table_view_v1';
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label class="block font-semibold mb-1 text-slate-700"><span class="text-rose-500">*</span> {{ prefs.txt("প্রারম্ভিক স্টক", "Opening Stock") }}
-                  @if (isEditMode() && !variantOpeningUnlocked()) {
+                  @if (isEditMode() && !variantOpeningUnlocked() && canEditStock()) {
                     <button type="button" (click)="askOpeningUnlock('variant')" class="ml-1 inline-flex items-center gap-0.5 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-800 hover:bg-amber-100 cursor-pointer align-middle transition-colors">
                       <mat-icon style="font-size:10px;width:10px;height:10px;">key</mat-icon> {{ prefs.txt('আনলক', 'Unlock') }}
                     </button>
                   }
                 </label>
-                @if (!isEditMode() || variantOpeningUnlocked()) {
+                @if ((!isEditMode() || variantOpeningUnlocked()) && canEditStock()) {
                   <div class="flex items-center border rounded-lg bg-white overflow-hidden focus-within:ring-2 focus-within:ring-teal-500 px-2 py-1" [class]="isEditMode() ? 'border-2 border-teal-400' : 'border-slate-300'">
                     <mat-icon class="text-slate-400 text-sm mr-1">subtitles</mat-icon>
                     <input id="variant-opening-stock" type="number" min="0" [(ngModel)]="editVariantOpeningStock" class="w-full outline-none text-xs font-bold text-slate-900">
@@ -2264,6 +2278,15 @@ export class Products {
   dataService = inject(DataService);
   readonly prefs = inject(PreferencesService);
   readonly session = inject(SessionService);
+
+  /** Stock numbers follow the owner lock; the grant lets a chosen user edit them while unlocked. */
+  readonly canEditStock = computed(() => {
+    const user = this.session.currentUser();
+    if (!user) return false;
+    if (this.session.isMain(user)) return true;
+    if (this.dataService.voucherSettings().lockStock) return false;
+    return user.role === 'Admin' || this.session.has('editStock');
+  });
   readonly noImage = NO_IMAGE;
   private notify = inject(NotificationService);
   private media = inject(MediaService);
@@ -2818,8 +2841,8 @@ export class Products {
           salesPrice: Number(this.editVariantSalesPrice) || 0,
           salesTaxType: this.editVariantSalesTaxType || undefined,
           wholesaleQuantity: this.optionalNumber(this.editVariantWholesaleQuantity),
-          openingStock: Number(this.editVariantOpeningStock) || 0,
-          openingStockDate: this.editVariantOpeningStockDate || undefined
+          openingStock: this.canEditStock() ? (Number(this.editVariantOpeningStock) || 0) : updated[idx].openingStock,
+          openingStockDate: this.canEditStock() ? (this.editVariantOpeningStockDate || undefined) : updated[idx].openingStockDate
         };
       }
       return updated;
@@ -3011,36 +3034,14 @@ export class Products {
 
   filteredProducts = computed(() => this.searchFiltered(this.activeTab()));
 
-  /** Searching a variant product answers once per variant, so every variant stands alone. */
-  private searchEntries = computed<ProductSearchEntry[]>(() => {
-    const query = this.searchQuery().trim();
-    const products = this.filteredProducts();
-    if (!query) return products.map(product => ({ product, score: 0 }));
-    return searchProductEntries(products, query);
-  });
-
-  rows = computed<ProductRow[]>(() => this.searchEntries().map(entry => ({
-    key: entry.variant ? `v-${entry.product.id}-${entry.variant.id}` : `p-${entry.product.id}`,
-    product: entry.product,
-    display: entry.variant ? this.variantDisplay(entry.product, entry.variant) : entry.product
+  /** The manager lists each product once; its variants live inside the product. */
+  rows = computed<ProductRow[]>(() => this.filteredProducts().map(product => ({
+    key: `p-${product.id}`,
+    product,
+    display: product
   })));
 
   totalRows = computed(() => this.rows().length);
-
-  /** A variant row carries its own code, stock and rates; actions still target the parent. */
-  private variantDisplay(p: Product, v: ProductVariant): Product {
-    return {
-      ...p,
-      name: `${p.name} — ${variantLabel(v) || v.itemCode || p.code}`,
-      code: v.itemCode || p.code,
-      image: v.image || p.image,
-      stock: Number(v.openingStock) || 0,
-      salesPrice: Number(v.salesPrice) || 0,
-      wholesalePrice: Number(v.wholesalePrice) || 0,
-      purchasePrice: Number(v.purchasePrice) || 0,
-      variants: []
-    };
-  }
 
   otherTabHits = computed(() => {
     if (!this.searchQuery().trim()) return [];
@@ -3674,6 +3675,7 @@ export class Products {
 
   /** Opening stock is Admin-locked; the PIN unlocks the editable fields for this edit. */
   askOpeningUnlock(target: 'product' | 'variant') {
+    if (!this.canEditStock()) return;
     this.openingPasscodeFor.set(target);
   }
 
@@ -3861,6 +3863,15 @@ export class Products {
       }
     }
 
+    // The owner's stock lock wins over any number a stale or scripted form still holds.
+    if (!this.canEditStock()) {
+      for (const variant of variants) {
+        const previous = existing?.variants?.find(v => v.itemCode === variant.itemCode);
+        variant.openingStock = previous?.openingStock ?? 0;
+        variant.openingStockDate = previous?.openingStockDate;
+      }
+    }
+
     const slug = this.ensureUniqueSlug(
       this.normalizeSlug(this.formSlug) || this.buildSlug(this.formName),
       this.editingProductId()
@@ -3916,7 +3927,7 @@ export class Products {
       subCategory: this.formSubCategory || undefined,
       brand: this.formBrand,
       model: joinProductModels(this.formModelList()),
-      stock,
+      stock: this.canEditStock() ? stock : (existing?.stock ?? 0),
       unit: this.formUnit,
       units,
       purchasePrice: isVariant ? minPositive(variants.map(v => v.purchasePrice)) : this.toNumber(this.formPurchasePrice),
@@ -3925,8 +3936,10 @@ export class Products {
       image: this.formImagePreview() || '',
       barcodeSymbology: this.formBarcodeSymbology,
       tax: this.optionalNumber(this.formTax),
-      openingStock,
-      openingStockDate: isVariant
+      openingStock: this.canEditStock() ? openingStock : (isEdit && existing ? previousOpening : 0),
+      openingStockDate: !this.canEditStock()
+        ? (isEdit && existing ? (existing.openingStockDate || undefined) : undefined)
+        : isVariant
         ? variants.map(v => v.openingStockDate).filter((d): d is string => !!d).sort()[0]
         : isEdit && existing && !this.openingUnlocked()
           ? (existing.openingStockDate || undefined)

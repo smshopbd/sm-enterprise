@@ -59,7 +59,7 @@ type StockSortKey = 'name' | 'category' | 'warehouse' | 'stock' | 'price' | 'val
         </div>
       </div>
 
-      @if (isAdmin()) {
+      @if (canEditStock()) {
         <div class="flex items-start gap-2 rounded-xl border border-teal-200 bg-teal-50/70 px-3 py-2 text-[11px] font-semibold text-teal-800">
           <mat-icon class="text-teal-600" style="font-size:16px;width:16px;height:16px;">fact_check</mat-icon>
           <span>{{ prefs.txt('পণ্যের পাশে সমন্বয় বাটনে চেপে হাতে গোনা প্রকৃত স্টক লিখুন — নতুন পাওয়া পণ্য বা ঘাটতি স্টকে বসে যাবে, ক্রয়-বিক্রয়ের হিসাব অপরিবর্তিত থাকবে।', 'Use the reconcile button beside a product to enter the physically counted stock — extra or missing units are booked without touching purchase or sale records.') }}</span>
@@ -142,7 +142,7 @@ type StockSortKey = 'name' | 'category' | 'warehouse' | 'stock' | 'price' | 'val
                     <mat-icon style="font-size:13px;width:13px;height:13px;">{{ sortIcon('value') }}</mat-icon>
                   </button>
                 </th>
-                @if (isAdmin()) {
+                @if (canEditStock()) {
                   <th class="p-2.5 text-center">{{ prefs.txt('সমন্বয়', 'RECONCILE') }}</th>
                 }
               </tr>
@@ -176,7 +176,7 @@ type StockSortKey = 'name' | 'category' | 'warehouse' | 'stock' | 'price' | 'val
                   </td>
                   <td class="p-2.5 text-right font-mono whitespace-nowrap">{{ p.salesPrice | number:'1.2-2' }} TK</td>
                   <td class="p-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">{{ (p.stock * p.salesPrice) | number:'1.2-2' }} TK</td>
-                  @if (isAdmin()) {
+                  @if (canEditStock()) {
                     <td class="p-2.5 text-center">
                       <button
                         (click)="openAdjust(p)"
@@ -194,7 +194,7 @@ type StockSortKey = 'name' | 'category' | 'warehouse' | 'stock' | 'price' | 'val
                 </tr>
               } @empty {
                 <tr>
-                  <td [attr.colspan]="isAdmin() ? 8 : 7" class="p-8 text-center">
+                  <td [attr.colspan]="canEditStock() ? 8 : 7" class="p-8 text-center">
                     <mat-icon class="text-slate-300" style="font-size:32px;width:32px;height:32px;">inventory_2</mat-icon>
                     <p class="mt-1 font-semibold text-slate-500">
                       {{ prefs.txt('কোনো পণ্য পাওয়া যায়নি।', 'No products found.') }}
@@ -214,7 +214,7 @@ type StockSortKey = 'name' | 'category' | 'warehouse' | 'stock' | 'price' | 'val
                 <td class="p-2.5 text-right font-mono whitespace-nowrap">{{ totalStock() | number:'1.0-2' }}</td>
                 <td class="p-2.5"></td>
                 <td class="p-2.5 text-right font-mono text-slate-900 whitespace-nowrap">{{ filteredValue() | number:'1.2-2' }} TK</td>
-                @if (isAdmin()) {
+                @if (canEditStock()) {
                   <td class="p-2.5"></td>
                 }
               </tr>
@@ -231,7 +231,7 @@ type StockSortKey = 'name' | 'category' | 'warehouse' | 'stock' | 'price' | 'val
         />
       </div>
 
-      @if (isAdmin()) {
+      @if (canEditStock()) {
         <div class="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
           <div class="px-3 py-2.5 border-b border-slate-200 flex items-center justify-between gap-2">
             <h2 class="font-bold text-slate-900 flex items-center gap-1.5">
@@ -469,7 +469,13 @@ export class Stock {
   readonly totalProducts = computed(() => this.dataService.products().length);
   readonly stockValue = computed(() => this.dataService.stockValueSales());
 
-  readonly isAdmin = computed(() => this.session.currentUser()?.role === 'Admin');
+  readonly canEditStock = computed(() => {
+    const user = this.session.currentUser();
+    if (!user) return false;
+    if (this.session.isMain(user)) return true;
+    if (this.dataService.voucherSettings().lockStock) return false;
+    return user.role === 'Admin' || this.session.has('editStock');
+  });
   readonly recentAdjustments = computed(() => this.dataService.stockAdjustments().slice(0, 25));
 
   readonly adjustReasons: { key: StockAdjustmentReason; bn: string; en: string }[] = [
@@ -510,7 +516,7 @@ export class Stock {
   });
 
   openAdjust(p: Product) {
-    if (!this.isAdmin() || p.type === 'service') return;
+    if (!this.canEditStock() || p.type === 'service') return;
     this.adjustProduct.set(p);
     this.adjustValue.set(this.round(p.stock));
     this.variantValues.set(Object.fromEntries(
@@ -583,7 +589,7 @@ export class Stock {
 
   saveAdjustment() {
     const product = this.adjustProduct();
-    if (!product || !this.isAdmin()) return;
+    if (!product || !this.canEditStock()) return;
     this.adjustError.set('');
     const counted = product.variants?.length
       ? { variants: { ...this.variantValues() } }

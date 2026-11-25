@@ -8,6 +8,7 @@ import { BatteryAdjustmentItem, DataService, Party, Sale, SaleItem, SalesReturnI
 import { NotificationService } from '../../../services/notification';
 import { OrderLockService } from '../../../services/order-lock';
 import { PreferencesService } from '../../../services/preferences';
+import { localizeAddress } from '../../../utils/bd-geo';
 import { SessionService } from '../../../services/session';
 import { InvoiceModal } from '../../../components/invoice-modal/invoice-modal';
 import { ShareInvoiceComponent } from '../../../components/share-invoice/share-invoice';
@@ -1002,7 +1003,7 @@ function persistSavedView(view: SavedView): void {
                   <p class="flex items-center gap-1 font-mono text-slate-500"><mat-icon class="text-[12px] text-slate-400">phone</mat-icon>{{ s.mobile }}</p>
                 }
                 @if (s.address) {
-                  <p class="leading-snug text-slate-500">{{ s.address }}</p>
+                  <p class="leading-snug text-slate-500">{{ addr(s.address) }}</p>
                 }
               </div>
             }
@@ -1479,6 +1480,10 @@ export class SalesList {
   private readonly router = inject(Router);
   readonly orderLock = inject(OrderLockService);
   readonly prefs = inject(PreferencesService);
+
+  addr(value?: string): string {
+    return localizeAddress(value, this.prefs.language());
+  }
 
   readonly tabs = ['All', 'Overdue', 'Ordered', 'Processing', 'Shipping', 'Confirmed', 'Completed', 'Cancelled'];
   readonly statuses: Sale['status'][] = ['Ordered', 'Confirmed', 'Processing', 'Shipping', 'Completed', 'Cancelled'];

@@ -1,4 +1,4 @@
-import { backupFileName, backupFolderFor, dailyBackupDue } from './backup';
+import { autoBackupEnabled, backupFileName, backupFolderFor, dailyBackupDue, normalizeBackupName } from './backup';
 
 describe('daily Drive backup', () => {
   it('is due when nothing was backed up yet', () => {
@@ -29,5 +29,19 @@ describe('Cloudinary backup layout', () => {
 
   it('names files with the day and a to-the-second time', () => {
     expect(backupFileName(new Date(2026, 10, 12, 9, 5, 7))).toBe('sm-x1-backup-2026-11-12-090507.json');
+  });
+
+  it('turns automatic backup on when this device never chose a setting', () => {
+    expect(autoBackupEnabled(null)).toBe(true);
+    expect(autoBackupEnabled('1')).toBe(true);
+    expect(autoBackupEnabled('0')).toBe(false);
+  });
+
+  it('cleans a renamed backup into a safe file name', () => {
+    expect(normalizeBackupName('  নভেম্বর শেষ  ')).toBe('নভেম্বর শেষ.json');
+    expect(normalizeBackupName('month/end:2026?.json')).toBe('month end 2026 .json');
+    expect(normalizeBackupName('backup.JSON')).toBe('backup.JSON');
+    expect(normalizeBackupName('   ')).toBe('');
+    expect(normalizeBackupName('a'.repeat(120))).toBe(`${'a'.repeat(80)}.json`);
   });
 });

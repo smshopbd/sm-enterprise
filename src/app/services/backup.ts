@@ -9,7 +9,7 @@ import { localDateIso } from '../utils/local-date';
 /** Free Cloudinary plans reject raw files above 10 MB. */
 const MAX_CLOUD_BYTES = 9 * 1024 * 1024;
 const BACKUP_INDEX_KEY = 'sm_backup_index_v1';
-const INDEX_LIMIT = 20;
+const INDEX_LIMIT = 60;
 /** Credentials and login state never leave the device inside a backup file. */
 const OMIT_FROM_BACKUP = [CLOUD_CONFIG_KEY, CLOUD_KEY_STORAGE, SESSION_KEY, 'sm_device_key_v1', BACKUP_INDEX_KEY];
 const KEEP_ON_RESTORE = [CLOUD_CONFIG_KEY, CLOUD_KEY_STORAGE, SESSION_KEY, 'sm_device_key_v1', BACKUP_INDEX_KEY];
@@ -36,6 +36,25 @@ export function backupFileName(now = new Date()): string {
   const stamp = [now.getHours(), now.getMinutes(), now.getSeconds()]
     .map(value => (value < 10 ? `0${value}` : String(value))).join('');
   return `sm-x1-backup-${localDateIso(now)}-${stamp}.json`;
+}
+
+/** Automatic backup is on unless the shop switched it off (`0`). */
+export function autoBackupEnabled(stored: string | null): boolean {
+  return stored !== '0';
+}
+
+/** A readable list name: no path separators, always ends in `.json`, 80 characters at most. */
+export function normalizeBackupName(input: string): string {
+  const cleaned = Array.from(input)
+    .map(ch => ('<>:"/\\|?*'.includes(ch) || ch.charCodeAt(0) < 32 ? ' ' : ch))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '')
+    .slice(0, 80)
+    .trim();
+  if (!cleaned) return '';
+  return /\.json$/i.test(cleaned) ? cleaned : `${cleaned}.json`;
 }
 
 export interface CloudBackupEntry {
@@ -78,7 +97,7 @@ export class BackupService {
 
   constructor() {
     try {
-      this.autoBackup.set(localStorage.getItem(AUTO_KEY) === '1');
+      this.autoBackup.set(autoBackupEnabled(localStorage.getItem(AUTO_KEY)));
       this.lastBackupAt.set(localStorage.getItem(LAST_KEY) ?? '');
     } catch {
       /* private mode / SSR */
@@ -94,13 +113,13 @@ export class BackupService {
     this.autoBackup.set(value);
     try {
       if (value) localStorage.setItem(AUTO_KEY, '1');
-      else localStorage.removeItem(AUTO_KEY);
+      else localStorage.setItem(AUTO_KEY, '0');
     } catch {
       /* private mode */
     }
     this.autoStatus.set(value
       ? this.prefs.txt('প্রতিদিনের ব্যাকআপ চালু — দিনে একবার Cloudinary-তে নিজেই যাবে।', 'Daily backup is on — one automatic upload to Cloudinary per day.')
-      : '');
+      : this.prefs.txt('স্বয়ংক্রিয় ব্যাকআপ বন্ধ — "এখনই ব্যাকআপ পাঠান" দিয়ে নিজে চালাতে পারবেন।', 'Automatic backup is off — use "Back up now" to run one yourself.'));
     if (value) void this.autoBackupIfDue();
   }
 
@@ -262,9 +281,62 @@ export class BackupService {
   /** The index travels with the shop through Supabase, so every device lists the same files. */
   listBackups(): CloudBackupEntry[] {
     const raw = this.storage.read(BACKUP_INDEX_KEY);
-    const list = Array.isArray(raw) ? (raw as CloudBackupEntry[]).filter(entry => !!entry?.url) : [];
+    const list = (Array.isArray(raw) ? (raw as CloudBackupEntry[]).filter(entry => !!entry?.url) : [])
+      .slice()
+      .sort((a, b) => this.stamp(b.createdAt) - this.stamp(a.createdAt));
     this.cloudFiles.set(list);
+    // Another device's upload counts as today's backup for this shop.
+    const newest = list.length ? this.stamp(list[0].createdAt) : 0;
+    if (newest > this.stamp(this.lastBackupAt())) {
+      this.lastBackupAt.set(list[0].createdAt);
+      try {
+        localStorage.setItem(LAST_KEY, list[0].createdAt);
+      } catch {
+        /* private mode */
+      }
+    }
     return list;
+  }
+
+  /** Saves a copy of a cloud backup file to this computer. */
+  async downloadFile(entry: CloudBackupEntry): Promise<{ name: string; bytes: number }> {
+    this.job.set({ busy: true, message: this.prefs.txt(`${entry.name} নামানো হচ্ছে…`, `Downloading ${entry.name}…`) });
+    try {
+      const response = await fetch(entry.url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const name = /\.json$/i.test(entry.name) ? entry.name : `${entry.name}.json`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = name;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      this.job.set({ busy: false, message: this.prefs.txt(`${name} (${this.mb(blob.size)}) ডাউনলোড হয়েছে।`, `${name} (${this.mb(blob.size)}) downloaded.`) });
+      return { name, bytes: blob.size };
+    } catch (error) {
+      this.job.set({ busy: false, message: '', error: this.text(error) });
+      throw error;
+    }
+  }
+
+  /** Renames an entry in the shared list; the Cloudinary asset keeps its own public id. */
+  renameEntry(entry: CloudBackupEntry, rawName: string): CloudBackupEntry {
+    const name = normalizeBackupName(rawName);
+    if (!name) {
+      throw new Error(this.prefs.txt('নতুন নাম দিন।', 'Enter a new name.'));
+    }
+    const list = this.listBackups();
+    const target = list.find(item => item.id === entry.id);
+    if (!target) {
+      throw new Error(this.prefs.txt('ব্যাকআপটি তালিকায় নেই — আবার তালিকা দেখুন।', 'That backup is no longer in the list — refresh it.'));
+    }
+    if (list.some(item => item.id !== entry.id && item.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error(this.prefs.txt('এই নামে আরেকটি ব্যাকআপ আছে — অন্য নাম দিন।', 'Another backup already uses that name — pick a different one.'));
+    }
+    const updated: CloudBackupEntry = { ...target, name };
+    this.writeIndex(list.map(item => (item.id === entry.id ? updated : item)));
+    return updated;
   }
 
   async downloadEntry(entry: CloudBackupEntry): Promise<BackupPayload> {
@@ -297,6 +369,8 @@ export class BackupService {
   async autoBackupIfDue(): Promise<'sent' | 'skipped' | 'failed'> {
     if (!this.autoBackup() || !this.cloudReady()) return 'skipped';
     if (!this.session.currentUser() || !this.session.has('manageSettings')) return 'skipped';
+    // The shared list tells whether another device already uploaded today.
+    this.listBackups();
     if (this.backedUpToday()) return 'skipped';
     try {
       const entry = await this.push();
@@ -361,6 +435,11 @@ export class BackupService {
 
   private mb(bytes: number): string {
     return bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MB` : `${Math.round(bytes / 1024)} KB`;
+  }
+
+  private stamp(iso: string | null | undefined): number {
+    const ms = iso ? Date.parse(iso) : NaN;
+    return Number.isFinite(ms) ? ms : 0;
   }
 
   private text(error: unknown): string {

@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, ElementRef, computed, inject, input
 import { MatIconModule } from '@angular/material/icon';
 import { DataService, WarrantyReceipt, WarrantyReplacement } from '../../services/data';
 import { PreferencesService } from '../../services/preferences';
+import { localizeAddress } from '../../utils/bd-geo';
 import { NotificationService } from '../../services/notification';
 import { dmyFromIso } from '../../utils/local-date';
 import { qrDataUrl } from '../../utils/qr-code';
@@ -109,7 +110,7 @@ import { warrantyExpiryDate } from '../../utils/warranty';
               <div class="wc-section">{{ prefs.txt('কাস্টমার তথ্য', 'Customer Details') }}</div>
               <div class="wc-row"><dt>{{ prefs.txt('কাস্টমার', 'Customer') }}</dt><dd>{{ r.customerName || '-' }}</dd></div>
               <div class="wc-row"><dt>{{ prefs.txt('মোবাইল', 'Mobile') }}</dt><dd>{{ r.phone || '-' }}</dd></div>
-              <div class="wc-row wc-full"><dt>{{ prefs.txt('ঠিকানা', 'Address') }}</dt><dd>{{ r.address || '-' }}</dd></div>
+              <div class="wc-row wc-full"><dt>{{ prefs.txt('ঠিকানা', 'Address') }}</dt><dd>{{ addr(r.address) }}</dd></div>
 
               <div class="wc-section">{{ prefs.txt('পণ্য ও ওয়ারেন্টি', 'Product & Warranty') }}</div>
               <div class="wc-row"><dt>{{ prefs.txt('পণ্য', 'Product') }}</dt><dd>{{ r.productName }}</dd></div>
@@ -235,6 +236,10 @@ export class WarrantyClaim {
   private host: ElementRef<HTMLElement> = inject(ElementRef);
   private notify = inject(NotificationService);
   readonly prefs = inject(PreferencesService);
+
+  addr(value?: string): string {
+    return localizeAddress(value, this.prefs.language()) || '-';
+  }
 
   receipt = input<WarrantyReceipt | null>(null);
   replacement = input<WarrantyReplacement | null>(null);
